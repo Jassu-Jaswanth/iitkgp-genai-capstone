@@ -68,6 +68,7 @@ class AgentRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     session_id: str
+    turn_id: str  # tags every span of this turn (metadata.turn_id) so the dashboard can fetch its trace
     route: str
     answer: str
     citations: list[str]
@@ -215,7 +216,9 @@ async def agent(req: AgentRequest, request: Request) -> AgentResponse:
     st = request.app.state
     s = st.settings
     session_id = req.session_id or uuid.uuid4().hex
-    config = {"configurable": {"thread_id": session_id}, "recursion_limit": s.agent_max_steps * 2 + 4}
+    turn_id = uuid.uuid4().hex
+    config = {"configurable": {"thread_id": session_id}, "metadata": {"turn_id": turn_id},
+              "recursion_limit": s.agent_max_steps * 2 + 4}
     turn_input = {"messages": [HumanMessage(req.question)], "route": "hr_policy", "critic_rounds": 0,
                   "critique": [], "critic_usage": []}
     t0 = time.perf_counter()
@@ -249,7 +252,7 @@ async def agent(req: AgentRequest, request: Request) -> AgentResponse:
                 pass
         t.pop("full_content", None)
     return AgentResponse(
-        session_id=session_id, route=summary["route"], answer=answer, citations=citations,
+        session_id=session_id, turn_id=turn_id, route=summary["route"], answer=answer, citations=citations,
         retrieved_clause_ids=list(dict.fromkeys(retrieved_ids)),
         retrieved_citations=[c for c in dict.fromkeys(retrieved_cites) if c],
         status=status, critique=vals.get("critique", []), tool_calls=summary["tool_calls"],

@@ -1,14 +1,15 @@
-# docker compose up --build   -> backend + chat dashboard (:8501) + trace dashboard (Phoenix, :6006)
+# docker compose up --build   -> one dashboard on :8501 (chat + traces + evals) over the backend (:8100)
+#                                 Phoenix runs headless: it stores traces, the dashboard reads them via its API
 #                                 retrieval is a placeholder until RAG_SERVICE_URL points at the RAG service
 services:
   phoenix:
     image: arizephoenix/phoenix:latest
     environment:
       PHOENIX_WORKING_DIR: /mnt/data
-      PHOENIX_ENABLE_AUTH: "false"   # local dev only; ports are bound to 127.0.0.1 below
+      PHOENIX_ENABLE_AUTH: "false"   # only reachable inside the compose network (no published port)
     volumes:
       - phoenix-data:/mnt/data
-    ports: ["127.0.0.1:6006:6006"]
+    # ports: ["127.0.0.1:6006:6006"]   # uncomment to open Phoenix's own UI for deep debugging
     healthcheck:   # image has no shell/curl; python is there
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:6006/healthz',timeout=5)"]
       interval: 5s
@@ -37,7 +38,7 @@ services:
     build: {context: ., dockerfile: frontend/Dockerfile}
     environment:
       API_URL: http://backend:8100
-      TRACES_UI_URL: http://localhost:6006
+      PHOENIX_URL: http://phoenix:6006
     volumes:
       - ./eval/results:/app/eval/results:ro
     ports: ["8501:8501"]
