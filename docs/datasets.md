@@ -1,33 +1,40 @@
 # Datasets: HR Policy Navigator (Track B)
 
-**Status:** shortlist, 21 Nov 2026 (branch `jaswanth/hr-policy-navigator`). Raw files go in `data/raw/` (git-ignored).
+**Status:** **Decided 21 Nov 2026: Option A (US federal HR: eCFR + OPM).** Raw files go in `data/raw/` (git-ignored).
 
 Ready-made "HR policy" datasets on Hugging Face and Kaggle are tiny or synthetic (a few hundred generated
 Q&A rows, or tabular employee records), so the corpus has to come from **real published policy documents**.
 Two viable routes:
 
-## Option A (recommended): US federal employee HR policy
+## Option A (chosen): US federal employee HR policy
 
 One coherent employer (the US federal workforce), public domain, short self-contained documents, and
 rules with **exact numeric answers**, so gold answers and calculators are easy.
 
 | Source | What it gives us | Size | License |
 |---|---|---|---|
-| [eCFR Title 5](https://www.ecfr.gov/current/title-5) via the [eCFR API](https://www.ecfr.gov/developers/documentation/api/v1) | Regulation **sections** (one doc each): leave (part 630), pay administration (550), overtime/FLSA (551), hours of duty (610), GS pay (531), incentives (575), adverse actions (752), health/life insurance (890/870) | **1,106 sections** in those parts (counted 21 Nov). Core subset 630+550+551+610+531+575 = 518 | Public domain (US govt work) |
-| [OPM pay & leave handbooks and fact sheets](https://www.opm.gov/policy-data-oversight/pay-leave/reference-materials/handbooks) | Plain-language explanations of the same rules (e.g. [childbirth/adoption flexibilities, Apr 2025](https://www.opm.gov/chcoc/transmittals/2025/Rev%20CPM%202025-04%20Handbook%20on%20Flexibilities%20for%20Childbirth%20Adoption%20and%20Foster%20Care.pdf), [leave administration](https://www.opm.gov/oca/leave/)) | Tens of PDFs/pages, split by section | Public domain |
-| OPM salary tables + federal holiday list | Structured data for tools (GS grade/step pay by locality; holidays) | Small CSV/XLSX | Public domain |
+| [eCFR Title 5](https://www.ecfr.gov/current/title-5) via the [eCFR API](https://www.ecfr.gov/developers/documentation/api/v1) | Regulation **sections** (one doc each): GS pay (531), pay administration (550), overtime/FLSA (551), incentives (575), hours of duty (610), leave (630), adverse actions (752). Optional: health/life insurance (890/870) | **Downloaded: 534 sections** (as of 2026-11-19) via `scripts/fetch_ecfr.py`. 144 exceed 512 tokens → need chunking | Public domain (US govt work) |
+| [5 U.S.C. chapter 63](https://www.govinfo.gov/content/pkg/USCODE-2023-title5/html/USCODE-2023-title5-partIII-subpartD-chap63.htm) (govinfo) | The **statute** behind the leave rules: accrual rates (§ 6303), 240-hour carryover cap (§ 6304), sick leave (§ 6307), FMLA (§§ 6381–6387) | ~40 sections | Public domain |
+| [OPM leave fact sheets](https://www.opm.gov/policy-data-oversight/pay-leave/leave-administration/fact-sheets/) and [handbooks](https://www.opm.gov/policy-data-oversight/pay-leave/reference-materials/handbooks/) | Plain-language guidance: annual/sick leave, FMLA, paid parental leave, LWOP, leave banks, bereavement, court leave, military leave; handbooks e.g. [childbirth/adoption/foster care (Apr 2025)](https://www.opm.gov/chcoc/transmittals/2025/Rev%20CPM%202025-04%20Handbook%20on%20Flexibilities%20for%20Childbirth%20Adoption%20and%20Foster%20Care.pdf) | **~45 fact sheets** + handbooks (scrapable, verified 21 Nov) | Public domain |
+| OPM [salary tables](https://www.opm.gov/policy-data-oversight/pay-leave/salaries-wages/) + [federal holidays](https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/) | Structured data for tools (GS grade/step pay by locality; holiday dates) | Small XLSX/HTML | Public domain |
 
-**Corpus plan:** ~518–800 regulation sections + ~100–300 OPM handbook/fact-sheet sections → within 500–2,000.
+**Corpus plan:** 534 regulation sections + ~40 statute sections + ~45 fact sheets and handbook sections
+≈ 650–700 documents (within 500–2,000); add parts 890/870 if we want benefits coverage.
+
+Regulations alone are not enough for the common questions: e.g. the 4/6/8-hour accrual rates and the
+240-hour carryover cap live in the **statute and OPM fact sheets**, not in 5 CFR 630.
 
 **Tools (≥3, deterministic where the 8B model is weak):**
-- `search_policy`: hybrid BM25 + dense over regs and handbooks, with citations (e.g. "5 CFR 630.202")
+- `search_policy`: hybrid BM25 + dense over statute, regs and fact sheets, with citations (e.g. "5 U.S.C. 6303", "5 CFR 630.202")
 - `leave_accrual_calc`: annual/sick leave hours by years of service and pay periods; carryover caps
 - `pay_lookup`: GS grade/step/locality salary, overtime rate
 - `holiday_calendar`: federal holidays and pay periods for a date range
 - `escalate_to_hr`: human-in-the-loop stub for consequential actions (adverse actions, disputes)
 
-**Eval examples (objective):** "How much annual leave does an employee with 4 years of service earn per
-pay period?" (4 hrs, 5 CFR 630.202) · "What is the maximum annual leave carryover?" (240 hrs) ·
+**Eval examples (objective, checked against the OPM annual leave fact sheet):**
+"How much annual leave does a full-time employee with 4 years of service earn per pay period?"
+(6 hours; 10 hours in the last pay period of the year; 5 U.S.C. 6303) · "Under 3 years?" (4 hours) ·
+"What is the maximum annual leave carryover for a regular employee?" (240 hours; 5 U.S.C. 6304) ·
 "Can I use sick leave to care for a family member, and how much?" · "What is my overtime rate at GS-12 step 5?"
 
 **Refusals:** individual legal advice, personnel decisions about named people, other employees' records.
@@ -61,5 +68,4 @@ Weaker for evaluation: fewer numeric rules, more prose, and GitLab moved many pe
 | Kaggle HR "employee datasets" | Tabular attrition/employee records, not policies |
 
 ## Open items
-- Team to confirm Option A vs B.
-- eCFR/OPM need no keys; downloads are scriptable into `data/raw/`.
+- eCFR/OPM/govinfo need no keys. Done: `scripts/fetch_ecfr.py`. Next: fetchers for 5 U.S.C. ch. 63, OPM fact sheets, salary tables and holidays.

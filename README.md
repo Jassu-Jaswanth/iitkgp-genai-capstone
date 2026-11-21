@@ -1,7 +1,7 @@
 # IIT KGP Gen AI & Agentic AI Capstone (Track B)
 
 **Track B: Multi-Agent Operations Copilot** on a hosted Qwen3-8B API.
-Topic: _TBD_, see [docs/topic-selection.md](docs/topic-selection.md).
+Topic: **HR Policy Navigator** for US federal employees (eCFR Title 5 + OPM guidance). See [docs/datasets.md](docs/datasets.md).
 
 ## Key dates
 - 25–27 Nov 2026: submission window (portal). No extensions.
