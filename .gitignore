@@ -15,3 +15,10 @@ data/*
 *.bin
 *.safetensors
 *.pt
+
+# Windows download metadata
+*:Zone.Identifier
+
+# Local-only context for Claude sessions/subagents (certs, sources, analysis)
+.context/
+.claude/settings.local.json
