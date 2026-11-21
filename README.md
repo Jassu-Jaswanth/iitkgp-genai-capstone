@@ -12,19 +12,29 @@ Topic: _TBD_, see [docs/topic-selection.md](docs/topic-selection.md).
 - [docs/upgrad-communications.md](docs/upgrad-communications.md): digest of upGrad emails, endpoints and API limits
 - [docs/resources/Track-B-Inference-API-Guide.docx](docs/resources/Track-B-Inference-API-Guide.docx) and [Embedding-API-Quickstart.md](docs/resources/Embedding-API-Quickstart.md)
 
+## Layout
+| Folder | Purpose |
+|---|---|
+| `backend/` | API service: agents, tools, RAG, LLM client |
+| `frontend/` | UI |
+| `docs/` | Brief, upGrad resources, design notes, report |
+| `data/` | Corpus and datasets (contents git-ignored) |
+| `scripts/` | One-off utilities (endpoint check, corpus download, indexing) |
+| `.context/` | **Local only, git-ignored**: CA certs, source texts, personal analysis notes |
+
 ## Setup
 ```bash
 uv venv --python 3.12 && source .venv/bin/activate
 cp .env.example .env   # add the two keys from the team rep
-# put the two CA certs from the team rep in ./certs/
-python src/check_endpoints.py   # should print LLM OK and Embeddings OK
+# put the two CA certs from the team rep in ./.context/certs/
+python scripts/check_endpoints.py   # should print LLM OK and Embeddings OK
 ```
 
 The LLM key allows **one request at a time** across the whole team; a second
 concurrent call gets HTTP 429. Coordinate before running evals.
 
 ## Contributing
-`main` is protected: no direct pushes.
+`main` is protected: changes go through pull requests.
 1. `git switch -c <your-name>/<feature>`
 2. Commit, push, open a pull request.
 3. One teammate approves, then merge.

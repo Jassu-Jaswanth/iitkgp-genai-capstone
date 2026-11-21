@@ -1,6 +1,6 @@
 """Smoke-test the upGrad Track B endpoints using the values in .env.
 
-Run from the repo root:  python src/check_endpoints.py
+Run from the repo root:  python scripts/check_endpoints.py
 Stdlib only, so it works before any project dependencies are installed.
 """
 
