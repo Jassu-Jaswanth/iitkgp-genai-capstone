@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 API = os.getenv("API_URL", "http://localhost:8100")
+TRACES_UI = os.getenv("TRACES_UI_URL", "http://localhost:6006")
 RESULTS = Path(__file__).resolve().parent.parent / "eval" / "results"
 
 st.set_page_config(page_title="HR Policy Navigator", layout="wide")
@@ -31,6 +32,8 @@ def health() -> dict:
 
 h = health()
 st.sidebar.markdown(f"**Backend:** `{API}`  \nStatus: **{h.get('status')}**  \nRetriever: `{h.get('retriever', '-')}`")
+if h.get("tracing"):
+    st.sidebar.markdown(f"[Open trace dashboard (Phoenix)]({TRACES_UI})")
 
 # ------------------------------------------------------------------ chat
 if page == "Chat":

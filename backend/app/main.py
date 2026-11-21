@@ -26,6 +26,7 @@ from .llm import build_chat_model
 from .prompts import DECOMPOSE_PROMPT, STRATEGIES, build_messages, parse_strategy_output, system_for
 from .retrieval import Chunk, build_retriever
 from .tools import build_tools
+from .tracing import setup_tracing
 
 
 class ChatTurn(BaseModel):
@@ -121,6 +122,7 @@ async def lifespan(app: FastAPI):
     s = get_settings()
     st = app.state
     st.settings = s
+    st.tracing = setup_tracing()
     st.gate = asyncio.Semaphore(s.llm_max_concurrency)  # the key allows one active request
     st.llm = build_chat_model(s)
     st.retriever = build_retriever(s.rag_service_url)
@@ -144,7 +146,7 @@ async def health(request: Request) -> dict[str, Any]:
     except Exception as exc:  # report, don't crash the health check
         llm = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     return {"status": "ok" if llm["ok"] else "degraded", "llm": llm, "retriever": st.retriever.name,
-            "tools": [t.name for t in st.tools]}
+            "tools": [t.name for t in st.tools], "tracing": st.tracing}
 
 
 @app.post("/chat", response_model=ChatResponse)

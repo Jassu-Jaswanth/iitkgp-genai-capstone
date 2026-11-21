@@ -162,3 +162,15 @@ Token counts use the bge tokenizer itself (the course's "count tokens, not words
   `.env`, `.context`, `data`). Backend healthcheck on `/health`; the dashboard waits for a healthy backend.
 - **Verified:** `docker compose up` → backend healthy; agent in a container answered "GS-12 step 5 DC overtime"
   correctly ($55.89, cited); dashboard HTTP 200.
+
+## E14. Observability with Arize Phoenix (21 Nov)
+- **Choice:** Arize Phoenix (one container, OpenTelemetry/OpenInference) instead of self-hosted Langfuse (v3 needs ~5
+  services). `openinference-instrumentation-langchain` auto-traces every LangGraph node, LLM call and tool call; we
+  added no custom span code (`backend/app/tracing.py`, enabled by `PHOENIX_COLLECTOR_ENDPOINT`).
+- **Gotcha:** Phoenix 22 enables auth by default; span export failed with HTTP 401. For local dev it runs with
+  `PHOENIX_ENABLE_AUTH=false`, **bound to 127.0.0.1 only**. A shared deployment must use auth + an API key header.
+- **One agent request** = 1 trace: router → planner ×2 → tools (leave_accrual_calc) → critic, 4 LLM spans with
+  prompts, tokens and latency.
+- **First RAG-backed answers:** the carryover question was right (240 h, cited 5 U.S.C. 6304), but the agent appended
+  a false qualifier ("applies to … employees with less than 3 years"). It called the calculator with a default
+  years value and narrated the band. Candidate for the eval failure taxonomy (hallucination via tool defaults).
