@@ -8,6 +8,11 @@ services:
       PHOENIX_ENABLE_AUTH: "false"           # local only; port bound to 127.0.0.1 (TODO(tracing): auth if shared)
     volumes: [phoenix-data:/mnt/data]
     ports: ["127.0.0.1:6006:6006"]
+    healthcheck:                             # image has no shell/curl; python is there
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:6006/healthz',timeout=5)"]
+      interval: 5s
+      timeout: 5s
+      retries: 24                            # first start runs DB migrations
 
   backend:                                   # LangGraph agent + /chat baseline
     build: {context: ., dockerfile: backend/Dockerfile}
@@ -20,6 +25,8 @@ services:
       - ./.context/certs:/app/.context/certs:ro
       - ./data/processed:/app/data/processed:ro
     ports: ["8100:8100"]
+    depends_on:
+      phoenix: {condition: service_healthy}  # otherwise early traces are dropped while Phoenix migrates
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health',timeout=5)"]
       interval: 30s
