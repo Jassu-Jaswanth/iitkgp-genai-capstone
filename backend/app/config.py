@@ -22,8 +22,12 @@ class Settings(BaseSettings):
     llm_context_tokens: int = 8192
     llm_default_max_tokens: int = 512
 
-    # Retrieval (built by the RAG teammate). Empty URL -> placeholder retriever.
+    # Retrieval component. rag_mode: "" = auto (http if rag_service_url else placeholder) | placeholder | http |
+    # inprocess (imports rag/pipeline.py and searches inside this process; needs `uv sync --extra rag`)
+    rag_mode: str = ""
     rag_service_url: str = ""
+    rag_chunking: str = "token-256/32+header"
+    rag_retriever: str = "hybrid+rerank"
     retrieval_top_k: int = 5
 
     # Agent

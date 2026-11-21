@@ -304,3 +304,51 @@ def stats(docs: list[Document]) -> dict:
         by_sec[d.metadata["section_id"]] += 1
     return {"chunks": len(docs), "median_tokens": lens[len(lens) // 2], "p95_tokens": lens[int(len(lens) * .95)],
             "max_tokens": lens[-1], "over_512": sum(1 for x in lens if x > 512), "sections": len(by_sec)}
+
+
+# ---------------------------------------------------------------- the component the backend / service use
+
+class PolicySearch(BaseRetriever):
+    """The retrieval component: `invoke(query, k=5, filters={"source_type": ...})` -> top-k unique chunks whose
+    metadata follows the backend contract (chunk_id, citation, clause_ids, score, source_url, section_id, ...).
+    Used in-process by the backend (RAG_MODE=inprocess) and behind HTTP by rag/service.py."""
+
+    inner: BaseRetriever
+    max_k: int = 10
+
+    def _get_relevant_documents(self, query: str, *, run_manager, k: int = 5, filters: dict | None = None):
+        docs = self.inner.invoke(query, config={"callbacks": run_manager.get_child()})
+        allowed = (filters or {}).get("source_type")
+        if allowed:
+            docs = [d for d in docs if d.metadata["source_type"] == allowed]
+        out = []
+        for rank, d in enumerate(dedupe_by_chunk(docs, min(k, self.max_k)), 1):
+            m = d.metadata
+            out.append(Document(page_content=d.page_content, id=m["chunk_id"], metadata={
+                "chunk_id": m["chunk_id"], "citation": m["citation"], "clause_ids": m["clause_ids"],
+                "score": round(1.0 / rank, 4), "source_url": m.get("url"), "section_id": m["section_id"],
+                "heading": m["heading"], "source_type": m["source_type"], "rank": rank}))
+        return out
+
+    async def _aget_relevant_documents(self, query: str, *, run_manager, k: int = 5, filters: dict | None = None):
+        from langchain_core.runnables.config import run_in_executor  # CPU work (BM25, FAISS, rerank) off the loop
+        return await run_in_executor(None, self._get_relevant_documents, query, run_manager=run_manager.get_sync(),
+                                     k=k, filters=filters)
+
+
+def build_policy_search(chunking: str = "token-256/32+header", retriever: str = "hybrid+rerank", *,
+                        query_instruction: bool = False, reranker: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                        max_k: int = 10) -> tuple[PolicySearch, dict]:
+    """Load corpus -> chunk -> FAISS (cached in data/index) + BM25 -> chosen retriever, wrapped as PolicySearch."""
+    import time
+    t0 = time.perf_counter()
+    sections = load_sections()
+    docs = chunk_strategies()[chunking](sections)
+    base = upgrad_embeddings()
+    vs = build_faiss(docs, base, "upgrad-bge-small__" + chunking.replace("/", "_"))
+    vs.embedding_function = QueryInstructionEmbeddings(base) if query_instruction else base
+    inner = retrievers_for(docs, vs, max_k, reranker_model=reranker)[retriever]
+    info = {"chunking": chunking, "retriever": retriever, "query_instruction": query_instruction,
+            "reranker": reranker if "rerank" in retriever else None, "chunks": len(docs), "sections": len(sections),
+            "startup_s": round(time.perf_counter() - t0, 1)}
+    return PolicySearch(inner=inner, max_k=max_k), info

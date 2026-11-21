@@ -128,7 +128,7 @@ async def lifespan(app: FastAPI):
     st.tracing = setup_tracing()
     st.gate = asyncio.Semaphore(s.llm_max_concurrency)  # the key allows one active request
     st.llm = build_chat_model(s)
-    st.retriever = build_retriever(s.rag_service_url)
+    st.retriever = build_retriever(s.rag_service_url, s.rag_mode, s.rag_chunking, s.rag_retriever)
     st.tools = build_tools(st.retriever, s.data_path())
     st.agent = build_agent(build_chat_model(s), build_chat_model(s, max_tokens=400), st.tools,
                            context_tokens=s.llm_context_tokens, max_answer_tokens=s.llm_default_max_tokens)

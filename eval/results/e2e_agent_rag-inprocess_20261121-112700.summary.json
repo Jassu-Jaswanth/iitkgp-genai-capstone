@@ -1,0 +1,18 @@
+{
+  "mode": "agent",
+  "n": 31,
+  "accuracy": 1.0,
+  "behavior_ok": 1.0,
+  "completion_rate": 1.0,
+  "cited_rate_policy": 0.613,
+  "retrieval_recall": 0.677,
+  "avg_tool_calls": 1.03,
+  "avg_llm_calls": 3.32,
+  "avg_prompt_tokens": 7636,
+  "avg_completion_tokens": 207,
+  "p50_latency_ms": 6155,
+  "failures": {},
+  "by_category": {
+    "policy": "31/31"
+  }
+}

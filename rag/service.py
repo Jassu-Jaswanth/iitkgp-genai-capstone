@@ -4,11 +4,10 @@
       -> {"chunks": [{"chunk_id", "text", "citation", "clause_ids", "score", "source_url", "metadata"}]}
 
 Run from the repo root:
-    RAG_CHUNKING=clause-pack-350 RAG_RETRIEVER=hybrid+rerank rag/.venv/bin/uvicorn service:app --app-dir rag --port 8200
+    RAG_CHUNKING=token-256/32+header RAG_RETRIEVER=hybrid+rerank rag/.venv/bin/uvicorn service:app --app-dir rag --port 8200
 """
 
 import os
-import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -17,12 +16,11 @@ from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract
 from pydantic import BaseModel, Field
 
-from pipeline import (QueryInstructionEmbeddings, build_faiss, chunk_strategies, dedupe_by_chunk, load_sections,
-                      retrievers_for, upgrad_embeddings)
+from pipeline import build_policy_search
 
-CHUNKING = os.getenv("RAG_CHUNKING", "clause-pack-350")
+CHUNKING = os.getenv("RAG_CHUNKING", "token-256/32+header")
 RETRIEVER = os.getenv("RAG_RETRIEVER", "hybrid+rerank")
-QUERY_INSTRUCTION = os.getenv("RAG_QUERY_INSTRUCTION", "1") == "1"
+QUERY_INSTRUCTION = os.getenv("RAG_QUERY_INSTRUCTION", "0") == "1"
 RERANKER = os.getenv("RAG_RERANKER", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 MAX_K = 10
 
@@ -49,17 +47,10 @@ class RetrieveRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    t0 = time.perf_counter()
     tracing = setup_tracing()
-    sections = load_sections()
-    docs = chunk_strategies()[CHUNKING](sections)
-    base = upgrad_embeddings()
-    vs = build_faiss(docs, base, "upgrad-bge-small__" + CHUNKING.replace("/", "_"))
-    vs.embedding_function = QueryInstructionEmbeddings(base) if QUERY_INSTRUCTION else base
-    app.state.retriever = retrievers_for(docs, vs, MAX_K, reranker_model=RERANKER)[RETRIEVER]
-    app.state.info = {"chunking": CHUNKING, "retriever": RETRIEVER, "query_instruction": QUERY_INSTRUCTION,
-                      "reranker": RERANKER if "rerank" in RETRIEVER else None, "chunks": len(docs),
-                      "sections": len(sections), "tracing": tracing, "startup_s": round(time.perf_counter() - t0, 1)}
+    app.state.search, info = build_policy_search(CHUNKING, RETRIEVER, query_instruction=QUERY_INSTRUCTION,
+                                                 reranker=RERANKER, max_k=MAX_K)
+    app.state.info = {**info, "tracing": tracing}
     yield
 
 
@@ -78,16 +69,12 @@ def retrieve(req: RetrieveRequest, request: Request) -> dict:
         raise HTTPException(422, "filters.source_type must be statute, regulation or guidance")
     token = otel_context.attach(extract(dict(request.headers)))  # continue the backend's trace
     try:
-        docs = request.app.state.retriever.invoke(req.query, config={"run_name": "rag_service.hybrid_rerank",
-                                                                     "metadata": request.app.state.info})
+        docs = request.app.state.search.invoke(req.query, k=req.k, filters=req.filters,
+                                               config={"run_name": "rag_service.search"})
     finally:
         otel_context.detach(token)
-    if allowed:
-        docs = [d for d in docs if d.metadata["source_type"] == allowed]
-    docs = dedupe_by_chunk(docs, req.k)
     return {"chunks": [{"chunk_id": d.metadata["chunk_id"], "text": d.page_content, "citation": d.metadata["citation"],
-                        "clause_ids": d.metadata["clause_ids"], "score": round(1.0 / rank, 4),  # rank-based score
-                        "source_url": d.metadata.get("url"),
-                        "metadata": {"section_id": d.metadata["section_id"], "heading": d.metadata["heading"],
-                                     "source_type": d.metadata["source_type"], "rank": rank}}
-                       for rank, d in enumerate(docs, 1)]}
+                        "clause_ids": d.metadata["clause_ids"], "score": d.metadata["score"],
+                        "source_url": d.metadata["source_url"],
+                        "metadata": {k: d.metadata[k] for k in ("section_id", "heading", "source_type", "rank")}}
+                       for d in docs]}

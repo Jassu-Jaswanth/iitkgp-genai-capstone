@@ -181,6 +181,12 @@ def steps(spans: list[dict]) -> list[dict]:
 
 
 # ------------------------------------------------------------------ drawing
+def _under_retriever(span: dict, spans: list[dict]) -> bool:
+    """HTTP mode records PolicyRetriever -> (service) -> ...; count each search once."""
+    parent = next((p for p in spans if p["context"]["span_id"] == span["parent_id"]), None)
+    return bool(parent and parent["span_kind"] == "RETRIEVER")
+
+
 def summary_metrics(spans: list[dict]) -> dict[str, Any]:
     llm = [s for s in spans if s["span_kind"] == "LLM"]
     root = next((s for s in spans if s["parent_id"] is None), None)
@@ -188,7 +194,8 @@ def summary_metrics(spans: list[dict]) -> dict[str, Any]:
             "prompt_tokens": sum(int(s["attributes"].get("llm.token_count.prompt") or 0) for s in llm),
             "completion_tokens": sum(int(s["attributes"].get("llm.token_count.completion") or 0) for s in llm),
             "tool_calls": sum(s["span_kind"] == "TOOL" for s in spans),
-            "retrievals": sum(s["span_kind"] == "RETRIEVER" and s["name"] == "PolicyRetriever" for s in spans),
+            "retrievals": sum(s["span_kind"] == "RETRIEVER" and s["name"] in ("PolicyRetriever", "PolicySearch")
+                              and not _under_retriever(s, spans) for s in spans),
             "latency_s": round((_ts(root["end_time"]) - _ts(root["start_time"])).total_seconds(), 1) if root else 0}
 
 

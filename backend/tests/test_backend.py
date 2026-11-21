@@ -256,3 +256,12 @@ def test_strategy_output_parsing():
 
 def test_chat_rejects_unknown_strategy(client):
     assert client.post("/chat", json={"question": "q", "strategy": "magic"}).status_code == 422
+
+
+def test_retriever_mode_selection():
+    from app.retrieval import build_retriever
+    assert build_retriever().name == "placeholder"
+    assert build_retriever("http://rag:8200").name == "http"
+    assert build_retriever("http://rag:8200", mode="placeholder").name == "placeholder"
+    with pytest.raises(ValueError):
+        build_retriever(mode="http")

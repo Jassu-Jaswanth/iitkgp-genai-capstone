@@ -1,4 +1,4 @@
-"""Retrieval interface. The RAG index itself is built by the RAG teammate; the server only CALLS it.
+"""Retrieval interface: one retrieve() contract, three interchangeable components (placeholder / http / inprocess).
 
 Contract (see .context/analysis/data-curation-architecture.md):
     retrieve(query, k, filters) -> list[Chunk]
@@ -104,6 +104,29 @@ class LangChainRetrieverAdapter:
         return [doc_to_chunk(d) for d in docs]
 
 
-def build_retriever(rag_service_url: str) -> Retriever:
-    name = "http" if rag_service_url else "placeholder"
-    return LangChainRetrieverAdapter(PolicyRetriever(base_url=rag_service_url), name)
+def build_retriever(rag_service_url: str = "", mode: str = "", chunking: str = "token-256/32+header",
+                    retriever: str = "hybrid+rerank") -> Retriever:
+    """Pick the retrieval component. All three satisfy the same retrieve() contract, so the agent can't tell them apart.
+    - placeholder: returns nothing (agent still runs; answers "not covered")
+    - http:        POST {rag_service_url}/retrieve (a separately deployed RAG service)
+    - inprocess:   rag/pipeline.py's PolicySearch called directly (no extra server)"""
+    mode = mode or ("http" if rag_service_url else "placeholder")
+    if mode == "inprocess":
+        return LangChainRetrieverAdapter(*_inprocess(chunking, retriever))
+    if mode == "http" and not rag_service_url:
+        raise ValueError("RAG_MODE=http needs RAG_SERVICE_URL")
+    return LangChainRetrieverAdapter(PolicyRetriever(base_url=rag_service_url if mode == "http" else ""), mode)
+
+
+def _inprocess(chunking: str, retriever: str) -> tuple[BaseRetriever, str]:
+    import sys
+    from pathlib import Path
+    rag_dir = str(Path(__file__).resolve().parents[2] / "rag")
+    if rag_dir not in sys.path:
+        sys.path.insert(0, rag_dir)
+    try:
+        from pipeline import build_policy_search
+    except ImportError as exc:
+        raise RuntimeError("RAG_MODE=inprocess needs the RAG libraries: cd backend && uv sync --extra rag") from exc
+    search, info = build_policy_search(chunking, retriever)
+    return search, f"inprocess:{info['chunking']}/{info['retriever']}"
