@@ -191,3 +191,52 @@ Token counts use the bge tokenizer itself (the course's "count tokens, not words
   BM25Retriever (30 candidates) + VectorStoreRetriever (30) → planner (LLM) → critic (LLM). This shows the query the
   agent chose ("leave for bone marrow donation", rewritten from the user's wording) and what each retrieval stage
   returned, which is the evidence needed to classify retrieval misses vs generation errors.
+
+## E16. Retrieval grid results (21 Nov): 7 chunkings × 5 retrievers × 2 query variants, 147 synthetic questions
+Files: `eval/results/retrieval_20261121-083407.csv`, `retrieval_20261121-084011.csv` (dense+rerank).
+Metrics at depth 10: sec@k = a chunk from the gold section in the top k; cl@k = a chunk containing the gold clause.
+
+| Config (plain query) | sec@1 | sec@5 | cl@5 | MRR | ms/q |
+|---|---|---|---|---|---|
+| parent-child (clause → section), dense | **0.571** | **0.857** | 0.857* | **0.693** | 35 |
+| token-256/32 **+header**, hybrid+rerank | **0.571** | 0.837 | 0.782 | 0.688 | 738 |
+| token-256/32 +header, dense+rerank | 0.565 | 0.823 | 0.762 | 0.680 | 500 |
+| clause-pack-350, hybrid+rerank | 0.517 | 0.816 | **0.789** | 0.639 | 890 |
+| recursive-450/80 (course hands-on), hybrid+rerank | 0.531 | 0.810 | 0.701 | 0.634 | 378 |
+| token-256/32 (no header), hybrid+rerank | 0.517 | 0.789 | 0.728 | 0.630 | 676 |
+| clause-pack-350, dense | 0.510 | 0.769 | 0.701 | 0.620 | 34 |
+| token-256/32 +header, dense | 0.503 | 0.762 | 0.667 | 0.608 | 27 |
+| token-256/32 +header, hybrid-rrf | 0.483 | 0.721 | 0.660 | 0.590 | 37 |
+| recursive-450/80, dense | 0.429 | 0.701 | 0.558 | 0.549 | 35 |
+| best BM25 (token+header) | 0.354 | 0.619 | 0.531 | 0.458 | 7 |
+
+\* parent-child cl@5 is inflated: a parent contains all its clauses.
+
+**Findings**
+1. **The reranker is the biggest lever:** +5–10 points of sec@5 for every chunking (e.g. recursive-450: 0.701 → 0.810).
+   Cost: 0.4–0.9 s/query on CPU (ms-marco-MiniLM-L-6-v2, 30 candidates).
+2. **Contextual headers help everywhere:** token-256 0.789 → 0.837 (rerank), clause-pack 0.789 → 0.816 (rerank),
+   dense 0.728 → 0.769. Cheap: about +20 tokens per chunk.
+3. **Equal-weight hybrid RRF is often WORSE than dense alone** (token+header: 0.721 vs 0.762; recursive-450: 0.680 vs
+   0.701). BM25 alone is weak (0.52–0.62) and drags the fused ranking down. Yet hybrid+rerank (0.837) beats
+   dense+rerank (0.823): BM25 helps as a **candidate generator** for the reranker, not as an equal voter.
+   Alternatives: weighted RRF (e.g. 0.3/0.7), or BM25 only as a reranker feeder.
+   This contradicts the expectation that synthetic questions favour BM25 (E9). The paraphrase prompt worked.
+4. **BGE query instruction: no effect** (±0.01 everywhere) on this endpoint. The course's "#1 silent bug" didn't
+   materialise for bge-small-en-v1.5 v1.5 (its model card says the instruction is optional for v1.5).
+5. **Parent-child gives the best section-level scores at dense cost (35 ms)** but returns whole sections (truncated
+   to ~700 tokens). Five results take ~3.5k of the 8k context and may cut off the needed clause.
+6. **Chunk size:** the course default recursive-600/120 is worse than 450/80 (sec@5 0.789 vs 0.810 with rerank);
+   tokenizer-aware 256-token chunks + header is best among chunk strategies.
+
+**Decision for the running service:** token-256/32 + header + hybrid+rerank (best chunk-level config, ~1k tokens of
+context for 5 chunks). Parent-child is the runner-up to test end-to-end. Caveat: synthetic questions; confirm on the
+gold set.
+
+## E17. Reproducible hallucination via tool defaults (21 Nov)
+- "Maximum annual leave I can carry over?" → correct 240 h [5 U.S.C. 6304], but in 2/2 runs (two RAG configs) the
+  agent appended "applies to … employees with less than 3 years of creditable service". The user gave no years.
+  The agent called `leave_accrual_calc` with a made-up `years_of_service` and narrated the service band.
+- **Root cause:** the tool requires `years_of_service` even for a carryover-only question, so the model invents one.
+- **Candidate fixes:** make `years_of_service` optional (carryover doesn't depend on it); tell the planner to ask for
+  missing facts instead of inventing them; have the critic flag claims about user attributes not stated by the user.

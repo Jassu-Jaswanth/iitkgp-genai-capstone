@@ -255,7 +255,9 @@ def retrievers_for(docs: list[Document], vs: FAISS, k: int, *, fetch_k: int = 30
     hybrid_wide = EnsembleRetriever(retrievers=[bm25_wide, dense_wide], weights=[0.5, 0.5], c=60)
     rerank = ContextualCompressionRetriever(
         base_compressor=CrossEncoderReranker(model=cross_encoder(reranker_model), top_n=k), base_retriever=hybrid_wide)
-    return {"dense": dense, "bm25": bm25, "hybrid-rrf": hybrid, "hybrid+rerank": rerank}
+    dense_rerank = ContextualCompressionRetriever(
+        base_compressor=CrossEncoderReranker(model=cross_encoder(reranker_model), top_n=k), base_retriever=dense_wide)
+    return {"dense": dense, "bm25": bm25, "hybrid-rrf": hybrid, "hybrid+rerank": rerank, "dense+rerank": dense_rerank}
 
 
 @lru_cache

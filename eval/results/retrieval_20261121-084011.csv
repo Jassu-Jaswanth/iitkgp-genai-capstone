@@ -1,0 +1,5 @@
+chunking,retriever,query,chunks,sec@1,sec@3,sec@5,sec@10,cl@1,cl@5,cl@10,MRR,ms/query,index_build_s
+token-256/32+header,dense+rerank,plain,3574,0.565,0.796,0.823,0.844,0.463,0.762,0.816,0.68,499.5,0.2
+token-256/32+header,dense+rerank,bge-instr,3574,0.565,0.796,0.823,0.844,0.463,0.755,0.81,0.682,505.2,0.2
+clause-pack-350,dense+rerank,plain,2616,0.51,0.728,0.81,0.884,0.435,0.776,0.857,0.633,602.9,0.0
+clause-pack-350,dense+rerank,bge-instr,2616,0.503,0.721,0.796,0.85,0.429,0.769,0.83,0.621,603.6,0.0
