@@ -13,7 +13,9 @@ __pycache__/
 data/*
 !data/.gitkeep
 !data/README.md
-!data/processed/
+!data/corpus/
+!data/tables/
+!data/queries/
 *.bin
 *.safetensors
 *.pt

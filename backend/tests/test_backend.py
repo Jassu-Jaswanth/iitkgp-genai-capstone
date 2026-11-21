@@ -17,8 +17,8 @@ from app.prompts import NO_CONTEXT_NOTE, build_messages
 from app.retrieval import Chunk
 from app.tools import PayTable, build_tools, leave_accrual
 
-DATA = REPO_ROOT / "data" / "processed"
-HAVE_OPM = (DATA / "opm" / "gs_pay_2026.csv").exists()
+DATA = REPO_ROOT / "data"
+HAVE_OPM = (DATA / "tables" / "gs_pay_2026.csv").exists()
 
 
 class ScriptedChat(BaseChatModel):
@@ -99,7 +99,7 @@ def test_leave_accrual_caps_and_part_time():
 
 @pytest.mark.skipif(not HAVE_OPM, reason="OPM data not downloaded")
 def test_pay_lookup_matches_opm_table():
-    r = PayTable(DATA / "opm" / "gs_pay_2026.csv").lookup(grade=12, step=5, locality="Washington")
+    r = PayTable(DATA / "tables" / "gs_pay_2026.csv").lookup(grade=12, step=5, locality="Washington")
     assert (r["locality_code"], r["annual_salary"], r["overtime_hourly_rate"]) == ("DCB", 116071, 55.89)
 
 

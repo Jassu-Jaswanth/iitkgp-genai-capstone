@@ -144,8 +144,8 @@ CONSEQUENTIAL_TOOLS = {"escalate_to_hr"}  # human-in-the-loop boundary
 
 
 def build_tools(retriever: Retriever, data_dir: Path) -> list[BaseTool]:
-    pay = PayTable(data_dir / "opm" / "gs_pay_2026.csv")
-    cal = HolidayCalendar(data_dir / "opm" / "holidays.csv")
+    pay = PayTable(data_dir / "tables" / "gs_pay_2026.csv")
+    cal = HolidayCalendar(data_dir / "tables" / "holidays.csv")
 
     async def search_policy(query: str, k: int = 5, state: dict | None = None) -> dict:
         # Eval finding (E18): the agent's rewritten "rule name" queries retrieved the wrong rule in 5/50 gold

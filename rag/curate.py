@@ -2,7 +2,8 @@
 
 Run from the repo root (after scripts/fetch_*.py):
     python rag/curate.py
-Writes data/processed/documents.jsonl (nested) and data/processed/clauses.jsonl (flat, one clause per line).
+Writes data/corpus/documents.jsonl (nested) and data/corpus/clauses.jsonl (flat, one clause per line), and copies
+the OPM pay table and holidays from data/raw/opm/ to data/tables/.
 
 One adapter per source, no generic PDF parsing (see .context/analysis/data-curation-architecture.md).
 Stdlib only.
@@ -16,7 +17,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
-OUT = ROOT / "data" / "processed"
+OUT = ROOT / "data" / "corpus"
+TABLES = ROOT / "data" / "tables"
 
 MARK = re.compile(r"^((?:\((?:[a-z]{1,2}|\d{1,3}|[ivxl]{1,6}|[A-Z]{1,2})\))+)\s*")
 ROMAN = re.compile(r"^[ivxl]+$")
@@ -262,7 +264,13 @@ def main() -> int:
     with (OUT / "documents.jsonl").open("w") as fh:
         for d in docs:
             fh.write(json.dumps(d, ensure_ascii=False) + "\n")
-    print(f"\n{len(docs)} documents, {n_sections} sections, {n_clauses} clauses -> data/processed/")
+    print(f"\n{len(docs)} documents, {n_sections} sections, {n_clauses} clauses -> data/corpus/")
+    TABLES.mkdir(parents=True, exist_ok=True)
+    for name in ("gs_pay_2026.csv", "holidays.csv"):
+        src = RAW / "opm" / name
+        if src.exists():
+            (TABLES / name).write_bytes(src.read_bytes())
+            print(f"  table {name} -> data/tables/")
     for k, v in problems.items():
         print(f"  {k}: {v}")
     print(f"  duplicate clause_ids: {len(dupes)}" + (f" e.g. {dupes[:3]}" if dupes else ""))

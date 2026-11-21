@@ -49,7 +49,7 @@ def run(retriever, evalset) -> tuple[list[list[dict]], float]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--eval", default="eval/data/retrieval_synthetic_v1.jsonl")
+    ap.add_argument("--eval", default="data/queries/retrieval_synthetic_v1.jsonl")
     ap.add_argument("--only", nargs="*", help="chunking strategies to run (default: all)")
     ap.add_argument("--reranker", default="cross-encoder/ms-marco-MiniLM-L-6-v2")
     ap.add_argument("--skip-parent-child", action="store_true")

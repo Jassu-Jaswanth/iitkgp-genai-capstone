@@ -1,11 +1,11 @@
 """Generate a synthetic RETRIEVAL eval set: one question per sampled clause, gold = that clause/section.
 
 Run from the repo root:  rag/.venv/bin/python rag/make_retrieval_eval.py --n 150
-Writes eval/data/retrieval_synthetic_v1.jsonl. Uses the upGrad Qwen3-8B endpoint (1 request at a time).
+Writes data/queries/retrieval_synthetic_v1.jsonl. Uses the upGrad Qwen3-8B endpoint (1 request at a time).
 
 Known bias (report): questions are generated FROM the clause, so they share vocabulary with it, which favours
 BM25/lexical retrieval. The prompt asks for everyday wording to reduce this; the hand-written gold set
-(eval/data/gold_*.jsonl) is the unbiased check.
+(data/queries/gold_*.jsonl) is the unbiased check.
 """
 
 import argparse
@@ -40,7 +40,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=150)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--out", default="eval/data/retrieval_synthetic_v1.jsonl")
+    ap.add_argument("--out", default="data/queries/retrieval_synthetic_v1.jsonl")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)

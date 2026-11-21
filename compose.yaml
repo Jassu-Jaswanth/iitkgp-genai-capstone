@@ -24,7 +24,7 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - ./.context/certs:/app/.context/certs:ro
-      - ./data/processed:/app/data/processed:ro
+      - ./data:/app/data:ro
     ports: ["8100:8100"]
     depends_on:
       phoenix: {condition: service_healthy}  # otherwise early traces are dropped while Phoenix migrates

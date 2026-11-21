@@ -1,7 +1,7 @@
 """Validate a gold/held-out eval file.
 
-    python eval/validate_gold.py eval/data/heldout_v1.jsonl            # report problems + unfilled placeholders
-    python eval/validate_gold.py eval/data/heldout_v1.jsonl --strict   # also fail on any remaining <FILL ...>
+    python eval/validate_gold.py data/queries/heldout_v1.jsonl            # report problems + unfilled placeholders
+    python eval/validate_gold.py data/queries/heldout_v1.jsonl --strict   # also fail on any remaining <FILL ...>
 
 Stdlib only.
 """

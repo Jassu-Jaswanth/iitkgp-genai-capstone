@@ -1,6 +1,6 @@
 """RAG pipeline on LangChain components: chunking strategies, embeddings, indexes, retrievers.
 
-Corpus: data/processed/clauses.jsonl (from rag/curate.py), grouped back into sections.
+Corpus: data/corpus/clauses.jsonl (from rag/curate.py), grouped back into sections.
 Every chunk carries metadata {chunk_id, section_id, clause_ids, citation, url} so retrieval can be scored
 at clause and section level regardless of how the text was split.
 
@@ -32,7 +32,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 ROOT = Path(__file__).resolve().parent.parent
-PROCESSED = ROOT / "data" / "processed"
+PROCESSED = ROOT / "data" / "corpus"
 INDEX_DIR = ROOT / "data" / "index"
 BGE_TOKENIZER = "BAAI/bge-small-en-v1.5"
 BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
