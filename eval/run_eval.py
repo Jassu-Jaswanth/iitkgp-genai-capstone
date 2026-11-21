@@ -66,13 +66,46 @@ def retrieved_clause_ids(mode: str, resp: dict) -> set[str]:
     return ids
 
 
+PLACEHOLDER = "<FILL"
+
+
+def real(values: list[str]) -> list[str]:
+    return [v for v in values or [] if v and not v.startswith(PLACEHOLDER)]
+
+
+def citation_covers(gold: str, got: str) -> bool:
+    """'5 U.S.C. 6303' covers '5 U.S.C. 6303(a)(1)' (and vice versa); exact match otherwise."""
+    g, r = gold.strip(), got.strip()
+    if g == r:
+        return True
+    short, long_ = (g, r) if len(g) < len(r) else (r, g)
+    return long_.startswith(short) and long_[len(short):len(short) + 1] in ("(", " ", ">")
+
+
+def retrieved_citations(mode: str, resp: dict) -> list[str]:
+    if mode == "chat":
+        return [c.get("citation", "") for c in resp.get("chunks", [])]
+    return resp.get("retrieved_citations", [])
+
+
+def gold_retrieved(item: dict, mode: str, resp: dict) -> bool | None:
+    """Recall@k for this item: by clause id when both sides have ids from the same corpus, else by citation."""
+    gold_ids, gold_cites = set(real(item.get("gold_clause_ids", []))), real(item.get("gold_citations", []))
+    if not gold_ids and not gold_cites:
+        return None  # no retrieval target (tool/guardrail items, or placeholders not filled yet)
+    got_ids = retrieved_clause_ids(mode, resp)
+    if gold_ids and got_ids and gold_ids & got_ids:
+        return True
+    got_cites = retrieved_citations(mode, resp)
+    return any(citation_covers(g, c) for g in gold_cites for c in got_cites)
+
+
 def evaluate(item: dict, mode: str, resp: dict) -> dict:
     answer = resp.get("answer", "")
     tools_called = [t["tool"] for t in resp.get("trace", []) if t.get("type") == "tool_call"]
     tool_errors = resp.get("tool_errors", 0)
-    got_ids = retrieved_clause_ids(mode, resp)
-    gold_ids = set(item["gold_clause_ids"])
-    retrieved_gold = bool(gold_ids & got_ids) if gold_ids else None
+    retrieved_gold = gold_retrieved(item, mode, resp)
+    has_target = retrieved_gold is not None
     behavior = behavior_of(answer, tools_called)
     behavior_ok = behavior == item["expected_behavior"] or (item["expected_behavior"] == "not_covered" and behavior == "refuse")
     correct = behavior_ok and (matched(answer, item["must_contain"]) if item["expected_behavior"] == "answer" else True)
@@ -84,7 +117,7 @@ def evaluate(item: dict, mode: str, resp: dict) -> dict:
     if not correct:
         if tool_errors:
             failure = "tool_error"
-        elif gold_ids and not retrieved_gold:
+        elif has_target and not retrieved_gold:
             failure = "retrieval_miss"
         elif behavior == "not_covered" and item["expected_behavior"] == "answer":
             failure = "not_covered_wrong"
@@ -141,17 +174,31 @@ def main() -> int:
     args = ap.parse_args()
     items = [json.loads(l) for l in (ROOT / args.gold).open()]
     items = [i for i in items if not args.qids or i["qid"] in args.qids][: args.limit]
+    skipped = [i["qid"] for i in items if i["question"].startswith("<FILL")]
+    items = [i for i in items if not i["question"].startswith("<FILL")]
+    if skipped:
+        print(f"skipping {len(skipped)} items whose question is still a placeholder")
+    if not items:
+        print("nothing to run")
+        return 0
     label = args.mode + (f"-{args.strategy}" if args.mode == "chat" else "")
     out = ROOT / "eval" / "results" / f"e2e_{label}{('_' + args.tag) if args.tag else ''}_{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     with httpx.Client(base_url=args.api, timeout=600) as client, out.open("w") as fh:
         for i, item in enumerate(items, 1):
-            body = {"question": item["question"]}
-            if args.mode == "chat":
-                body["strategy"] = args.strategy
-            r = client.post(f"/{args.mode}", json=body)
-            resp = r.json() if r.status_code == 200 else {"answer": f"HTTP {r.status_code}: {r.text[:200]}", "status": "http_error"}
+            turns = [t.strip() for t in item["question"].split("|||")]
+            resp, session_id, history = {}, None, []
+            for t in turns:  # multi-turn items: earlier turns give context, the gold applies to the last turn
+                body = {"question": t}
+                if args.mode == "chat":
+                    body |= {"strategy": args.strategy, "history": history}
+                elif session_id:
+                    body["session_id"] = session_id
+                r = client.post(f"/{args.mode}", json=body)
+                resp = r.json() if r.status_code == 200 else {"answer": f"HTTP {r.status_code}: {r.text[:200]}", "status": "http_error"}
+                session_id = resp.get("session_id")
+                history += [{"role": "user", "content": t}, {"role": "assistant", "content": resp.get("answer", "")}]
             row = evaluate(item, args.mode, resp)
             rows.append(row)
             fh.write(json.dumps(row) + "\n")

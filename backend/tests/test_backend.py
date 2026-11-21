@@ -17,7 +17,7 @@ from app.prompts import NO_CONTEXT_NOTE, build_messages
 from app.retrieval import Chunk
 from app.tools import PayTable, build_tools, leave_accrual
 
-DATA = REPO_ROOT / "data" / "raw"
+DATA = REPO_ROOT / "data" / "processed"
 HAVE_OPM = (DATA / "opm" / "gs_pay_2026.csv").exists()
 
 

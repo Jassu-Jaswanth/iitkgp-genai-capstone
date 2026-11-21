@@ -73,6 +73,7 @@ class AgentResponse(BaseModel):
     citations: list[str]
     status: str  # completed | step_limit | llm_error
     retrieved_clause_ids: list[str] = Field(default_factory=list)
+    retrieved_citations: list[str] = Field(default_factory=list)
     critique: list[str]
     tool_calls: int
     tool_errors: int
@@ -237,17 +238,20 @@ async def agent(req: AgentRequest, request: Request) -> AgentResponse:
         answer = f"The model endpoint failed: {error}"
     citations = extract_citations(answer, _known_citations_from_trace(summary["trace"]))
     retrieved_ids: list[str] = []
+    retrieved_cites: list[str] = []
     for t in summary["trace"]:
         if t["type"] == "tool_result" and t.get("tool") == "search_policy" and t["status"] != "error":
             try:
                 for r in json.loads(t["full_content"]).get("results", []):
                     retrieved_ids += r.get("clause_ids", [])
+                    retrieved_cites.append(r.get("citation", ""))
             except (ValueError, KeyError):
                 pass
         t.pop("full_content", None)
     return AgentResponse(
         session_id=session_id, route=summary["route"], answer=answer, citations=citations,
         retrieved_clause_ids=list(dict.fromkeys(retrieved_ids)),
+        retrieved_citations=[c for c in dict.fromkeys(retrieved_cites) if c],
         status=status, critique=vals.get("critique", []), tool_calls=summary["tool_calls"],
         tool_errors=summary["tool_errors"], trace=summary["trace"], usage=Usage(**summary["usage"]),
         latency_ms=round((time.perf_counter() - t0) * 1000, 1),

@@ -1,15 +1,25 @@
-# docker compose up --build            -> backend + dashboard (placeholder retriever unless RAG_SERVICE_URL is set)
-# docker compose --profile rag up      -> also the local RAG service (local/full-stack branch only)
+# docker compose up --build   -> backend + chat dashboard (:8501) + trace dashboard (Phoenix, :6006)
+#                                 retrieval is a placeholder until RAG_SERVICE_URL points at the RAG service
 services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      PHOENIX_ENABLE_AUTH: "false"   # local dev only; ports are bound to 127.0.0.1 below
+    volumes:
+      - phoenix-data:/mnt/data
+    ports: ["127.0.0.1:6006:6006"]
+
   backend:
     build: {context: ., dockerfile: backend/Dockerfile}
     env_file: .env
     environment:
       RAG_SERVICE_URL: ${RAG_SERVICE_URL:-}
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     volumes:
       - ./.env:/app/.env:ro
       - ./.context/certs:/app/.context/certs:ro
-      - ./data/raw/opm:/app/data/raw/opm:ro
+      - ./data/processed:/app/data/processed:ro
     ports: ["8100:8100"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health',timeout=5)"]
@@ -20,8 +30,12 @@ services:
     build: {context: ., dockerfile: frontend/Dockerfile}
     environment:
       API_URL: http://backend:8100
+      TRACES_UI_URL: http://localhost:6006
     volumes:
       - ./eval/results:/app/eval/results:ro
     ports: ["8501:8501"]
     depends_on:
       backend: {condition: service_healthy}
+
+volumes:
+  phoenix-data:
