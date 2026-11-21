@@ -1,0 +1,31 @@
+{
+  "mode": "chat",
+  "n": 50,
+  "accuracy": 0.74,
+  "behavior_ok": 0.88,
+  "completion_rate": 1.0,
+  "cited_rate_policy": 0.868,
+  "retrieval_recall": 0.514,
+  "avg_tool_calls": 0,
+  "avg_llm_calls": 1,
+  "avg_prompt_tokens": 1510,
+  "avg_completion_tokens": 71,
+  "p50_latency_ms": 2539,
+  "failures": {
+    "hallucination": 2,
+    "retrieval_miss": 3,
+    "reasoning_error": 7,
+    "not_covered_wrong": 1
+  },
+  "by_category": {
+    "calc-leave": "3/5",
+    "escalate": "0/1",
+    "holiday": "2/2",
+    "multi-step": "0/2",
+    "out-of-scope": "2/3",
+    "pay": "0/3",
+    "policy": "29/31",
+    "refuse": "0/2",
+    "safety": "1/1"
+  }
+}

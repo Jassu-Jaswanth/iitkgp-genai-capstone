@@ -56,7 +56,9 @@ def retrieved_clause_ids(mode: str, resp: dict) -> set[str]:
     if mode == "chat":
         for c in resp.get("chunks", []):
             ids |= set(c.get("clause_ids", []))
-    else:  # search_policy results in the trace (content may be truncated, so regex rather than json.loads)
+    elif resp.get("retrieved_clause_ids") is not None:  # agent: exact ids from untruncated tool results
+        ids |= set(resp["retrieved_clause_ids"])
+    else:  # older agent responses: search_policy results in the truncated trace
         for t in resp.get("trace", []):
             if t.get("type") == "tool_result" and t.get("tool") == "search_policy":
                 for arr in re.findall(r'"clause_ids":\s*\[([^\]]*)\]', t.get("content", "")):

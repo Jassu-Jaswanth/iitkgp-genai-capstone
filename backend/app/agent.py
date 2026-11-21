@@ -46,7 +46,8 @@ NOT_COVERED = "do not cover this"
 
 ROUTER_PROMPT = """Classify the user's LATEST request for a US federal HR policy assistant (earlier turns are context).
 hr_policy: federal leave, pay, holidays, benefits rules, HR processes, or the user's OWN situation, including
-  follow-ups to an HR answer and requests to escalate or complain.
+  follow-ups to an HR answer and requests to escalate or complain. This includes pay grades and steps,
+  within-grade (step) increases and waiting periods, premium/overtime pay, incentives, FMLA and paid parental leave.
 individual_records: asks for ANOTHER specific person's pay, grade, leave balance, performance or personal records.
 out_of_scope: not about US federal HR policy (private-company benefits, investment advice, unrelated topics).
 chitchat: greetings or thanks only."""
@@ -92,6 +93,9 @@ def _turn(messages: list[BaseMessage]) -> list[BaseMessage]:
 def build_agent(llm, critic_llm, tools: list, *, router_llm=None, context_tokens: int = 8192,
                 max_answer_tokens: int = 512, max_critic_rounds: int = 1, checkpointer=None):
     planner_llm = llm.bind_tools(tools)
+    # First step of every HR turn MUST use a tool (eval: the planner answered "not covered" without searching
+    # in 6/50 gold questions). tool_choice="required" is supported by the vLLM endpoint.
+    planner_first = llm.bind_tools(tools, tool_choice="required")
     router = (router_llm or critic_llm).with_structured_output(Route, method="function_calling")
 
     async def route_request(state: AgentState) -> dict[str, Any]:
@@ -119,7 +123,9 @@ def build_agent(llm, critic_llm, tools: list, *, router_llm=None, context_tokens
     async def planner(state: AgentState) -> dict[str, Any]:
         history = trim_messages(state["messages"], max_tokens=trim_budget, strategy="last",
                                 token_counter=count_tokens_approximately, start_on="human", include_system=False)
-        msg = await planner_llm.ainvoke([SystemMessage(PLANNER_PROMPT), *history])
+        used_tool = any(isinstance(m, ToolMessage) for m in _turn(state["messages"]))
+        model = planner_llm if used_tool else planner_first
+        msg = await model.ainvoke([SystemMessage(PLANNER_PROMPT), *history])
         out: list[BaseMessage] = [msg]
         # Malformed tool-call JSON from the model -> tell it, as an observation, and let it retry.
         for bad in getattr(msg, "invalid_tool_calls", None) or []:
@@ -144,8 +150,16 @@ def build_agent(llm, critic_llm, tools: list, *, router_llm=None, context_tokens
             f"[{m.name} result]\n{m.content}" for m in turn
             if isinstance(m, ToolMessage) and m.status != "error" and '"results": []' not in str(m.content))
         rounds = state.get("critic_rounds", 0)
-        if not draft or (not evidence and NOT_COVERED in draft):
+        searched = any(isinstance(m, ToolMessage) and m.name == "search_policy" for m in turn)
+        if not draft or (NOT_COVERED in draft and searched):
             return {"critique": [], "critic_rounds": rounds}
+        if NOT_COVERED in draft and not searched:
+            issues = ["You concluded 'not covered' without calling search_policy. Search for the rule first."]
+            update = {"critique": issues, "critic_rounds": rounds + 1}
+            if rounds + 1 <= max_critic_rounds:
+                update["messages"] = [HumanMessage("Reviewer found problems in your draft:\n- " + issues[0],
+                                                   additional_kwargs={"critic": True})]
+            return update
         if not evidence:  # claims with zero tool support this turn (e.g. follow-up answered from memory)
             issues = ["No tool result in this turn supports the answer. Call the relevant tool again with the "
                       "new values (earlier answers are not evidence)."]

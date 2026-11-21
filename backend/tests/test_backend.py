@@ -123,6 +123,7 @@ async def test_agent_uses_calculator_and_passes_critic():
 
 async def test_bad_tool_args_become_observation_not_crash():
     g = agent_for([call("pay_lookup", {"grade": 99, "step": 5}),  # grade out of range -> validation error
+                   call("search_policy", {"query": "GS grade range"}, "2"),
                    AIMessage(content="The provided policy documents do not cover this.")], [])
     s, _ = await run(g, "pay for GS-99?")
     err = next(t for t in s["trace"] if t["type"] == "tool_result")
@@ -152,8 +153,9 @@ async def test_step_limit_stops_runaway_loop():
 
 
 async def test_session_memory_keeps_history():
-    g = agent_for([AIMessage(content="The provided policy documents do not cover this."),
-                   AIMessage(content="The provided policy documents do not cover this.")], [])
+    nc = "The provided policy documents do not cover this."
+    g = agent_for([call("search_policy", {"query": "first rule"}, "1"), AIMessage(content=nc),
+                   call("search_policy", {"query": "second rule"}, "2"), AIMessage(content=nc)], [])
     await run(g, "first question", tid="s1")
     _, st = await run(g, "second question", tid="s1")
     humans = [m.content for m in st["messages"] if isinstance(m, HumanMessage)]
@@ -174,6 +176,15 @@ async def test_router_out_of_scope_and_failure_fallback():
                   routes=[AIMessage(content="not json")])  # router output unparseable -> falls through to planner
     s, _ = await run(g, "anything")
     assert s["route"] == "hr_policy"
+
+
+async def test_not_covered_without_search_is_sent_back():
+    g = agent_for([AIMessage(content="The provided policy documents do not cover this."),
+                   call("search_policy", {"query": "fmla eligibility"}, "2"),
+                   AIMessage(content="12 months of service [5 U.S.C. 6381(1)(B)].")], [critique()],
+                  retriever=OneChunkRetriever())
+    s, st = await run(g, "FMLA eligibility?")
+    assert any(t["type"] == "critic_feedback" for t in s["trace"]) and s["answer"].startswith("12 months")
 
 
 # ---------- prompts / citations ----------

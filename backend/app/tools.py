@@ -9,9 +9,11 @@ import csv
 import datetime as dt
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
+from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, Field
 
 from .retrieval import Retriever
@@ -124,6 +126,14 @@ class HolidayCalendar:
 class SearchArgs(BaseModel):
     query: str = Field(min_length=3, description="Name of the rule to look up, e.g. 'annual leave carryover limit'")
     k: int = Field(5, ge=1, le=10)
+    state: Annotated[dict, InjectedState] = Field(default_factory=dict)  # graph state (not shown to the model)
+
+
+def latest_user_question(state: dict) -> str:
+    for m in reversed(state.get("messages", []) if state else []):
+        if isinstance(m, HumanMessage) and not m.additional_kwargs.get("critic"):
+            return str(m.content)
+    return ""
 
 
 class EscalateArgs(BaseModel):
@@ -137,8 +147,21 @@ def build_tools(retriever: Retriever, data_dir: Path) -> list[BaseTool]:
     pay = PayTable(data_dir / "opm" / "gs_pay_2026.csv")
     cal = HolidayCalendar(data_dir / "opm" / "holidays.csv")
 
-    async def search_policy(query: str, k: int = 5) -> dict:
-        chunks = await retriever.retrieve(query, k=k)
+    async def search_policy(query: str, k: int = 5, state: dict | None = None) -> dict:
+        # Eval finding (E18): the agent's rewritten "rule name" queries retrieved the wrong rule in 5/50 gold
+        # questions that the user's own wording retrieved correctly. Search with BOTH and interleave the results.
+        queries = [query]
+        user_q = latest_user_question(state or {})
+        if user_q and user_q.strip().lower() != query.strip().lower():
+            queries.insert(0, user_q)
+        lists = [await retriever.retrieve(q, k=k) for q in queries]
+        seen, chunks = set(), []
+        for rank in range(k):
+            for lst in lists:
+                if rank < len(lst) and lst[rank].chunk_id not in seen:
+                    seen.add(lst[rank].chunk_id)
+                    chunks.append(lst[rank])
+        chunks = chunks[: k + 2]
         if not chunks:
             return {"results": [], "note": f"no policy excerpts found (retriever: {retriever.name})"}
         return {"results": [{"citation": c.citation, "text": c.text, "clause_ids": c.clause_ids,
@@ -150,12 +173,14 @@ def build_tools(retriever: Retriever, data_dir: Path) -> list[BaseTool]:
 
     return [
         StructuredTool.from_function(coroutine=search_policy, name="search_policy", args_schema=SearchArgs,
-            description="Search federal HR statutes, regulations and OPM guidance. Query with the NAME OF THE RULE, "
-                        "not the user's whole story. Returns cited excerpts."),
+            description="Search federal HR statutes, regulations and OPM guidance for RULES: eligibility, limits, waiting "
+                        "periods, entitlements, premium pay rates, procedures. Query with the NAME OF THE RULE, not the "
+                        "user's whole story. Returns cited excerpts."),
         StructuredTool.from_function(func=leave_accrual, name="leave_accrual_calc", args_schema=LeaveArgs,
             description="Compute annual/sick leave accrual and the annual leave carryover cap. Use for any leave arithmetic."),
         StructuredTool.from_function(func=pay.lookup, name="pay_lookup", args_schema=PayArgs,
-            description="2026 General Schedule annual salary, hourly and overtime rate by grade, step and locality."),
+            description="Dollar amounts only: 2026 General Schedule annual salary, hourly and overtime rate for a "
+                        "KNOWN grade, step and locality. Not for rules (waiting periods, eligibility); never guess a grade."),
         StructuredTool.from_function(func=cal.query, name="holiday_calendar", args_schema=HolidayArgs,
             description="List federal holidays between two dates."),
         StructuredTool.from_function(func=escalate_to_hr, name="escalate_to_hr", args_schema=EscalateArgs,

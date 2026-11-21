@@ -240,3 +240,51 @@ gold set.
 - **Root cause:** the tool requires `years_of_service` even for a carryover-only question, so the model invents one.
 - **Candidate fixes:** make `years_of_service` optional (carryover doesn't depend on it); tell the planner to ask for
   missing facts instead of inventing them; have the critic flag claims about user attributes not stated by the user.
+
+## E18. Gold-set evaluation: single-prompt strategies vs agent (21 Nov)
+Setup: gold set v1 (50 items), RAG = token-256/32+header, hybrid+rerank (E16), Qwen3-8B, one request at a time.
+Results: `eval/results/e2e_*_rag-v1_*`, `e2e_agent_rag-v2_*`, `e2e_agent_rag-v3_*`.
+
+| Setup | Accuracy | Policy (31) | Tools/guardrails (19) | Cited | LLM calls | Prompt tok | p50 |
+|---|---|---|---|---|---|---|---|
+| chat: grounded | 0.76 | 30 | 8 | 0.87 | 1.0 | 1,302 | 2.5 s |
+| chat: few-shot JSON | 0.74 | 29 | 8 | 0.87 | 1.0 | 1,510 | 2.5 s |
+| chat: chain-of-thought | 0.72 | 29 | 7 | 0.92 | 1.0 | 1,344 | 4.3 s |
+| chat: decompose | 0.66 | 24 | 9 | 0.79 | 2.0 | 1,573 | 4.1 s |
+| agent v1 | 0.82 | 22 | **19** | 0.53 | 2.6 | 4,280 | 4.5 s |
+| agent v2 (forced first tool call) | 0.90 | 26 | 19 | 0.68 | 3.1 | 5,461 | 5.1 s |
+| **agent v3 (+ user question in search)** | **1.00** | **31** | **19** | 0.71 | 2.8 | 5,510 | 5.7 s |
+
+**Prompting strategies (single prompt):** plain grounded was best (0.76). Few-shot JSON and CoT gave no gain
+(CoT: more "not covered" on answerable questions, 4 vs 3). Decompose was worst (0.66): its sub-queries retrieved
+worse chunks than the original question (9 retrieval misses vs 3). No single-prompt strategy can do pay (0/3),
+escalation or privacy refusals: these need tools or routing.
+
+**Agent v1 → v2: the agent "gave up" without searching (6/50).** The planner answered "The provided policy documents
+do not cover this." with ZERO tool calls on answerable questions (FMLA eligibility, within-grade waits, retention
+incentive…). Our own critic rule accepted "not covered + no evidence". Plus 1 router misroute ("waiting period
+between step 5 and step 6" → out_of_scope).
+Fixes: `bind_tools(..., tool_choice="required")` on the first planner step of each turn (vLLM supports it); the critic
+sends back "not covered" if `search_policy` didn't run; the router prompt lists steps/WGIs/incentives/FMLA; tool
+descriptions say pay_lookup is "dollar amounts only, never guess a grade" (with forced tool use it had called
+`pay_lookup(grade=1)` for a waiting-period question).
+
+**Agent v2 → v3: the agent's own query rewriting hurt retrieval (5/50).** All 5 remaining failures were answered
+correctly by the single-prompt baseline, which searches with the user's wording. The agent's "name of the rule"
+queries pulled neighbouring rules (administrative leave → 45-day carryover text; retention incentive 25% → 50% waiver
+clause; restored leave → carryover). Fix: `search_policy` reads the user's question via LangGraph `InjectedState`
+(hidden from the model's schema), searches with BOTH queries and interleaves results. → 31/31 policy.
+Lesson for the report: the course's "query with the rule name" advice was harmful with our reranked retriever;
+keeping the user's wording as one query is a cheap, robust hedge.
+
+**Measurement fixes along the way**
+- Retrieval recall for the agent was under-measured (0.14) because trace content is truncated at 1,500 chars and clause
+  ids come after the chunk text. `/agent` now returns `retrieved_clause_ids` from the untruncated results: true value 0.49.
+- Recall (0.49) < accuracy (1.00): the same fact often appears in an OPM fact sheet as well as in the statute, and the
+  gold set lists one source per question. Gold items should list all equivalent clauses.
+- g009 grading false negative ("there is no general cap" was correct). Accepted phrasings widened, and noted in the
+  item (`grading_note`).
+
+**Caveats:** (1) the gold set was written by us and the agent was then fixed against its failures, so 1.00 is
+optimistic. A held-out set written by teammates is required before claiming accuracy in the report. (2) n=50,
+single run, temperature 0. (3) Cost: the agent uses ~4× the prompt tokens and ~2× the latency of a single prompt.

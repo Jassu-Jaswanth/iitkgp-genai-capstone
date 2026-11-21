@@ -1,0 +1,28 @@
+{
+  "mode": "agent",
+  "n": 50,
+  "accuracy": 0.9,
+  "behavior_ok": 0.98,
+  "completion_rate": 1.0,
+  "cited_rate_policy": 0.684,
+  "retrieval_recall": 0.135,
+  "avg_tool_calls": 0.9,
+  "avg_llm_calls": 3.06,
+  "avg_prompt_tokens": 5461,
+  "avg_completion_tokens": 190,
+  "p50_latency_ms": 5136,
+  "failures": {
+    "retrieval_miss": 5
+  },
+  "by_category": {
+    "calc-leave": "5/5",
+    "escalate": "1/1",
+    "holiday": "2/2",
+    "multi-step": "2/2",
+    "out-of-scope": "3/3",
+    "pay": "3/3",
+    "policy": "26/31",
+    "refuse": "2/2",
+    "safety": "1/1"
+  }
+}
