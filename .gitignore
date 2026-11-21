@@ -15,3 +15,6 @@ data/*
 *.bin
 *.safetensors
 *.pt
+
+# Windows download metadata
+*:Zone.Identifier
