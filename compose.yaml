@@ -1,5 +1,4 @@
-# docker compose up --build  ->  agent API (:8100) + trace dashboard Phoenix (:6006)
-# Retrieval is a placeholder (agent answers "not covered") until RAG_SERVICE_URL points at the RAG service.
+# docker compose up --build  ->  agent API (:8100) + RAG service (:8200) + trace dashboard Phoenix (:6006)
 services:
   phoenix:                                   # trace dashboard: every LLM call, tool call and retrieval
     image: arizephoenix/phoenix:latest
@@ -18,7 +17,7 @@ services:
     build: {context: ., dockerfile: backend/Dockerfile}
     env_file: .env
     environment:
-      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-}
+      RAG_SERVICE_URL: http://rag:8200       # the RAG service below (overrides .env inside compose)
       PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
     volumes:
       - ./.env:/app/.env:ro
@@ -27,18 +26,34 @@ services:
     ports: ["8100:8100"]
     depends_on:
       phoenix: {condition: service_healthy}  # otherwise early traces are dropped while Phoenix migrates
+      rag: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health',timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # TODO(rag): add the RAG service here (reads ./data/corpus, serves POST /retrieve), then set
-  #   RAG_SERVICE_URL: http://rag:8200   on the backend.
-  # rag:
-  #   build: {context: ., dockerfile: rag/Dockerfile}
-  #   volumes: [./data/corpus:/app/data/corpus:ro]
-  #   ports: ["8200:8200"]
+  rag:                                       # RAG service: hybrid BM25 + bge-small (upGrad endpoint) + rerank
+    build: {context: ., dockerfile: rag/Dockerfile}
+    env_file: .env                           # EMBEDDING_* for the upGrad embedding endpoint
+    environment:
+      RAG_STRATEGY: ${RAG_STRATEGY:-clause-pack-200}
+      RAG_MODE: ${RAG_MODE:-hybrid_rerank}
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./.context/certs:/app/.context/certs:ro
+      - ./data/corpus:/app/data/corpus:ro
+      - ./data/index:/app/data/index           # built on first start if missing (git-ignored)
+    ports: ["8200:8200"]
+    depends_on:
+      phoenix: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8200/health',timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      start_period: 240s                     # first start embeds ~3k chunks via the endpoint
+      retries: 5
 
   # TODO(frontend): add the chat/eval dashboard (frontend/) once it lands on main.
 
