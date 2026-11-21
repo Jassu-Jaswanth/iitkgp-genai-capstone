@@ -1,6 +1,6 @@
 # Held-out evaluation set (v1): instructions for the team
 
-The agent was tuned against the 50-question golden dev set (`data/gold_v1.jsonl`), so its score there is optimistic.
+The agent was tuned against the 50-question golden dev set (`data/queries/gold_v1.jsonl`), so its score there is optimistic.
 The **held-out set** is the number we report. It only works if it stays unseen:
 
 - **Written by someone who did not tune the agent or the prompts.** Don't run these questions through the system
@@ -10,7 +10,7 @@ The **held-out set** is the number we report. It only works if it stays unseen:
 - **Realistic wording**: how an employee or HR specialist would actually ask, including vague or multi-part questions.
 - **Freeze before running.** Once `validate_gold.py --strict` passes, commit, then run the eval once and report it.
 
-## Fill in `data/heldout_v1.jsonl`
+## Fill in `data/queries/heldout_v1.jsonl`
 Each line is one item. Replace every `<FILL...>` value. Category and `qid` are pre-assigned to hit the quotas below.
 
 | Field | What to write |
@@ -40,9 +40,9 @@ Each line is one item. Replace every `<FILL...>` value. Category and `qid` are p
 
 ## Check and run
 ```bash
-python eval/validate_gold.py eval/data/heldout_v1.jsonl           # lists unfilled placeholders
-python eval/validate_gold.py eval/data/heldout_v1.jsonl --strict  # must pass before the frozen run
-python eval/run_eval.py --mode agent --gold eval/data/heldout_v1.jsonl --tag heldout
-python eval/run_eval.py --mode chat --strategy grounded --gold eval/data/heldout_v1.jsonl --tag heldout
+python eval/validate_gold.py data/queries/heldout_v1.jsonl           # lists unfilled placeholders
+python eval/validate_gold.py data/queries/heldout_v1.jsonl --strict  # must pass before the frozen run
+python eval/run_eval.py --mode agent --gold data/queries/heldout_v1.jsonl --tag heldout
+python eval/run_eval.py --mode chat --strategy grounded --gold data/queries/heldout_v1.jsonl --tag heldout
 ```
 Items whose question is still a placeholder are skipped by `run_eval.py`.

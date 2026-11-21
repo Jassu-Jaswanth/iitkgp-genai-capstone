@@ -4,27 +4,23 @@
 |---|---|
 | `run_eval.py` | asks every question, grades the answers, writes `results/` |
 | `validate_gold.py` | checks a question file; `--strict` fails while `<FILL>` is left |
-| `data/gold_v1.jsonl` | **the golden set: 50 questions with verified answers** (dev set, see below) |
-| `data/gold_example.jsonl` | 5 example questions (the format) |
-| `data/heldout_v1.jsonl` | **40-question template for the team to fill**: read `HELDOUT.md` |
 
-## The golden set (`gold_v1.jsonl`)
-50 real questions, each answer checked by hand against the law, regulation, OPM fact sheet or pay table.
-Each item says what a correct answer must contain, which source holds it, which tools should be used, and how the
-agent should behave (answer / refuse / escalate / not covered).
-
-| Kind | Items | Passes on main today? |
-|---|---|---|
-| needs only `search_policy` | 31 | after the RAG service is plugged in |
-| guardrails (privacy, off-topic, injection) | 6 | yes |
-| needs a TODO tool (leave calc, pay, holidays, escalation) | 13 | after that tool is built |
-
-It is a **dev set**: we tuned the agent on it (full build scored 50/50), so report the **held-out** score instead.
+The questions live with the dataset in `data/queries/` (see `docs/DATASET.md`):
+`gold_v1.jsonl` (50 verified, dev set), `gold_example.jsonl` (5, the format), `heldout_v1.jsonl` (40-item template
+for the team: read `HELDOUT.md`).
 
 ```bash
-python eval/run_eval.py --mode agent --gold eval/data/gold_v1.jsonl
-python eval/run_eval.py --mode agent --gold eval/data/gold_example.jsonl
-python eval/run_eval.py --mode chat --strategy grounded --gold eval/data/gold_example.jsonl
+python eval/run_eval.py --mode agent                                  # golden set (default)
+python eval/run_eval.py --mode chat --strategy grounded               # single-call baseline
+python eval/run_eval.py --mode agent --gold data/queries/heldout_v1.jsonl --tag heldout
 ```
-Grades per question: correct facts, right behaviour (answer / refuse / escalate / not covered), citation present,
+
+**Grades per question:** correct facts, right behaviour (answer / refuse / escalate / not covered), citation present,
 right source retrieved, tools used, tokens, time, and why it failed.
+
+**On main today:**
+- 31 golden questions need only `search_policy`: they pass once RAG is plugged in.
+- 6 guardrail questions pass now.
+- 13 expect the TODO tools.
+
+The golden set is a dev set (we tuned on it), so the **held-out** score is the one to report.

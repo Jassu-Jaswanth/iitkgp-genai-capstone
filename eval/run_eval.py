@@ -1,7 +1,7 @@
 """End-to-end evaluation against the running backend (Track B part V).
 
-    python eval/run_eval.py --mode agent --gold eval/data/gold_v1.jsonl
-    python eval/run_eval.py --mode chat  --gold eval/data/gold_v1.jsonl
+    python eval/run_eval.py --mode agent --gold data/queries/gold_v1.jsonl
+    python eval/run_eval.py --mode chat  --gold data/queries/gold_v1.jsonl
 
 Calls POST /chat (single-prompt baseline) or POST /agent, one question at a time (the model key allows one
 active request). Writes eval/results/e2e_<mode>_<timestamp>.jsonl (per question) and prints a summary.
@@ -169,7 +169,7 @@ def summarize(rows: list[dict], mode: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["chat", "agent"], default="agent")
-    ap.add_argument("--gold", default="eval/data/gold_v1.jsonl")
+    ap.add_argument("--gold", default="data/queries/gold_v1.jsonl")
     ap.add_argument("--api", default="http://localhost:8100")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--qids", nargs="*", help="only these question ids")

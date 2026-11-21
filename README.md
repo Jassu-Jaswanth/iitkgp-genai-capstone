@@ -48,8 +48,8 @@ What's left: [docs/TODO.md](docs/TODO.md).
 | Folder | What |
 |---|---|
 | `backend/` | the agent (LangGraph), tools, API, tracing |
-| `eval/` | the golden set (50 verified Q&A), held-out template, grading script: [eval/README.md](eval/README.md) |
-| `data/processed/` | the curated HR rules for RAG + tables for tools: [docs/DATASET.md](docs/DATASET.md) |
+| `eval/` | the grading script + validator: [eval/README.md](eval/README.md) |
+| `data/` | the dataset: corpus for RAG, tables for tools, golden queries: [docs/DATASET.md](docs/DATASET.md) |
 | `docs/` | **TODO tracker**, dataset guide, course brief and upGrad notes |
 | `scripts/` | endpoint check |
 

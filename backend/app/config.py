@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # Agent
     agent_max_steps: int = 10  # Track B guardrail: agent capped at 10 steps per query
-    data_dir: str = "./data/processed"  # pay table + holidays under opm/ (shipped with the curated corpus)
+    data_dir: str = "./data"  # the dataset: corpus/, tables/ (tool data), queries/ (eval)
 
     def data_path(self) -> Path:
         p = Path(self.data_dir)
