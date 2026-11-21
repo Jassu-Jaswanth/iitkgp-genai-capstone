@@ -14,12 +14,23 @@ rules with **exact numeric answers**, so gold answers and calculators are easy.
 | Source | What it gives us | Size | License |
 |---|---|---|---|
 | [eCFR Title 5](https://www.ecfr.gov/current/title-5) via the [eCFR API](https://www.ecfr.gov/developers/documentation/api/v1) | Regulation **sections** (one doc each): GS pay (531), pay administration (550), overtime/FLSA (551), incentives (575), hours of duty (610), leave (630), adverse actions (752). Optional: health/life insurance (890/870) | **Downloaded: 534 sections** (as of 2026-11-19) via `scripts/fetch_ecfr.py`. 144 exceed 512 tokens → need chunking | Public domain (US govt work) |
-| [5 U.S.C. chapter 63](https://www.govinfo.gov/content/pkg/USCODE-2023-title5/html/USCODE-2023-title5-partIII-subpartD-chap63.htm) (govinfo) | The **statute** behind the leave rules: accrual rates (§ 6303), 240-hour carryover cap (§ 6304), sick leave (§ 6307), FMLA (§§ 6381–6387) | ~40 sections | Public domain |
-| [OPM leave fact sheets](https://www.opm.gov/policy-data-oversight/pay-leave/leave-administration/fact-sheets/) and [handbooks](https://www.opm.gov/policy-data-oversight/pay-leave/reference-materials/handbooks/) | Plain-language guidance: annual/sick leave, FMLA, paid parental leave, LWOP, leave banks, bereavement, court leave, military leave; handbooks e.g. [childbirth/adoption/foster care (Apr 2025)](https://www.opm.gov/chcoc/transmittals/2025/Rev%20CPM%202025-04%20Handbook%20on%20Flexibilities%20for%20Childbirth%20Adoption%20and%20Foster%20Care.pdf) | **~45 fact sheets** + handbooks (scrapable, verified 21 Nov) | Public domain |
-| OPM [salary tables](https://www.opm.gov/policy-data-oversight/pay-leave/salaries-wages/) + [federal holidays](https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/) | Structured data for tools (GS grade/step pay by locality; holiday dates) | Small XLSX/HTML | Public domain |
+| [5 U.S.C. chapter 63](https://www.govinfo.gov/content/pkg/USCODE-2024-title5/html/USCODE-2024-title5-partIII-subpartE-chap63.htm) (govinfo, 2024 edition) | The **statute** behind the leave rules: accrual rates (§ 6303), carryover cap of 30 days = 240 hours (§ 6304), sick leave (§ 6307), leave transfer/banks, FMLA (§§ 6381–6387) | **Downloaded: 55 sections** via `scripts/fetch_uscode.py` | Public domain |
+| OPM [leave](https://www.opm.gov/policy-data-oversight/pay-leave/leave-administration/fact-sheets/) and [pay](https://www.opm.gov/policy-data-oversight/pay-leave/pay-administration/fact-sheets/) fact sheets | Plain-language guidance: annual/sick leave, FMLA, paid parental leave, LWOP, leave banks, bereavement, court/military leave, overtime, holiday pay, premium pay | **Downloaded: 96 fact sheets** (36 leave, 60 pay); median 1,356 words → chunk by heading | Public domain |
+| OPM [handbooks](https://www.opm.gov/policy-data-oversight/pay-leave/reference-materials/handbooks/) (PDF) | Childbirth/adoption/foster care, elder care, emergencies/dismissal, recruitment flexibilities | **Downloaded: 5 PDFs** + extracted text (needs `pdftotext`) | Public domain |
+| OPM [2026 GS pay table](https://www.opm.gov/policy-data-oversight/pay-leave/salaries-wages/) | Annual, hourly and overtime rate per locality × grade × step | **885 rows** (59 localities × 15 grades), CSV | Public domain |
+| OPM [federal holidays](https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/) (iCalendar feed) | Observed holiday dates | **112 holidays, 2021–2030**, CSV | Public domain |
 
-**Corpus plan:** 534 regulation sections + ~40 statute sections + ~45 fact sheets and handbook sections
-≈ 650–700 documents (within 500–2,000); add parts 890/870 if we want benefits coverage.
+**Corpus (downloaded 21 Nov):** 534 regulation sections + 55 statute sections + 96 fact sheets + 5 handbooks
+≈ **690 documents** (within 500–2,000). Add parts 890/870 if we want benefits coverage.
+
+### Rebuild the data
+```bash
+python scripts/fetch_ecfr.py      # data/raw/ecfr/title5_<date>.jsonl (+ raw XML)
+python scripts/fetch_uscode.py    # data/raw/uscode/usc5_chap63_2024.jsonl (+ raw HTML)
+python scripts/fetch_opm.py       # data/raw/opm/{factsheets,handbooks}.jsonl, gs_pay_2026.csv, holidays.csv
+```
+Stdlib only; handbook text extraction needs `pdftotext` (`sudo apt install poppler-utils`).
+A few links on OPM's own index pages are dead (404) and are skipped with a log line.
 
 Regulations alone are not enough for the common questions: e.g. the 4/6/8-hour accrual rates and the
 240-hour carryover cap live in the **statute and OPM fact sheets**, not in 5 CFR 630.
@@ -68,4 +79,4 @@ Weaker for evaluation: fewer numeric rules, more prose, and GitLab moved many pe
 | Kaggle HR "employee datasets" | Tabular attrition/employee records, not policies |
 
 ## Open items
-- eCFR/OPM/govinfo need no keys. Done: `scripts/fetch_ecfr.py`. Next: fetchers for 5 U.S.C. ch. 63, OPM fact sheets, salary tables and holidays.
+- Next: chunking (144 regulation sections and most fact sheets/handbooks exceed 512 tokens), then indexing.
