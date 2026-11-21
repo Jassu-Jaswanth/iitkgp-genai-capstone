@@ -1,0 +1,17 @@
+# Secrets: never commit API keys or the upGrad CA certificate
+.env
+*.pem
+*.crt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.ipynb_checkpoints/
+
+# Data and models (keep large files out of git)
+data/*
+!data/.gitkeep
+*.bin
+*.safetensors
+*.pt
