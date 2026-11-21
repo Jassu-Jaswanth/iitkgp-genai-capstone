@@ -1,194 +1,213 @@
-import asyncio
-import json
+"""Unit tests: real LangGraph wiring, scripted fake chat models (no network, no shared key)."""
 
-import httpx
+from pathlib import Path
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langgraph.errors import GraphRecursionError
 
-from app import llm as llm_mod
-from app.config import Settings, get_settings
-from app.llm import LLMClient, LLMError
-from app.main import app, extract_citations
+from app.agent import build_agent, summarize_turn
+from app.config import REPO_ROOT, Settings
+from app.main import _known_citations_from_trace, app, extract_citations
 from app.prompts import NO_CONTEXT_NOTE, build_messages
 from app.retrieval import Chunk
+from app.tools import PayTable, build_tools, leave_accrual
+
+DATA = REPO_ROOT / "data" / "raw"
+HAVE_OPM = (DATA / "opm" / "gs_pay_2026.csv").exists()
 
 
-def settings(**kw) -> Settings:
-    base = dict(llm_base_url="https://llm.test/v1", llm_api_key="test-key")
-    return Settings(_env_file=None, **{**base, **kw})
+class ScriptedChat(BaseChatModel):
+    """Returns scripted AIMessages in order; records what it was sent."""
+    script: list[AIMessage]
+    seen: list[Any] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "scripted"
+
+    def _generate(self, messages, stop=None, run_manager=None, **kw) -> ChatResult:
+        self.seen.append(messages)
+        msg = self.script.pop(0) if self.script else AIMessage(content="(script exhausted)")
+        return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    def bind_tools(self, tools, **kw):
+        return self
 
 
-def ok_body(content="Hello", pt=10, ct=2):
-    return {"choices": [{"message": {"content": content}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": pt, "completion_tokens": ct}}
+def call(name, args, i="1"):
+    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": f"call-{i}", "type": "tool_call"}])
 
 
-@pytest.fixture(autouse=True)
-def no_sleep(monkeypatch):
-    async def fast(_):
-        return None
-    monkeypatch.setattr(llm_mod.asyncio, "sleep", fast)
+def critique(*issues):
+    return AIMessage(content="", tool_calls=[{"name": "Critique", "args": {"issues": list(issues)}, "id": "crit", "type": "tool_call"}])
 
 
-# ---------- LLM client ----------
+class EmptyRetriever:
+    name = "empty"
 
-async def test_retries_429_then_succeeds():
-    calls = []
-
-    def handler(req: httpx.Request):
-        calls.append(req)
-        return httpx.Response(429) if len(calls) < 3 else httpx.Response(200, json=ok_body("OK"))
-
-    c = LLMClient(settings(), transport=httpx.MockTransport(handler))
-    r = await c.chat([{"role": "user", "content": "hi"}])
-    assert r.content == "OK" and r.attempts == 3 and len(calls) == 3
-    body = json.loads(calls[0].content)
-    assert body["chat_template_kwargs"] == {"enable_thinking": False}
-    assert calls[0].headers["authorization"] == "Bearer test-key"
+    async def retrieve(self, query, k=5, filters=None):
+        return []
 
 
-async def test_gives_up_after_retries():
-    c = LLMClient(settings(), transport=httpx.MockTransport(lambda r: httpx.Response(503)))
-    with pytest.raises(LLMError, match="4 attempts"):
-        await c.chat([{"role": "user", "content": "hi"}])
+class OneChunkRetriever:
+    name = "one"
+
+    async def retrieve(self, query, k=5, filters=None):
+        return [Chunk(chunk_id="c1", text="Annual leave accrues three-fourths day per pay period for 3 to 15 years.",
+                      citation="5 U.S.C. 6303(a)", clause_ids=["usc5-6303-a-2"], score=0.9)]
 
 
-async def test_non_retryable_error_raises_immediately():
-    calls = []
-
-    def handler(req):
-        calls.append(req)
-        return httpx.Response(400, text="bad request")
-
-    c = LLMClient(settings(), transport=httpx.MockTransport(handler))
-    with pytest.raises(LLMError, match="HTTP 400"):
-        await c.chat([{"role": "user", "content": "hi"}])
-    assert len(calls) == 1
+def agent_for(planner_script, critic_script, retriever=None, data_dir=DATA, **kw):
+    tools = build_tools(retriever or EmptyRetriever(), data_dir)
+    return build_agent(ScriptedChat(script=planner_script), ScriptedChat(script=critic_script), tools, **kw)
 
 
-async def test_strips_think_block_and_caps_max_tokens():
-    seen = {}
-
-    def handler(req):
-        seen.update(json.loads(req.content))
-        return httpx.Response(200, json=ok_body("<think>hmm</think>\n42"))
-
-    c = LLMClient(settings(), transport=httpx.MockTransport(handler))
-    r = await c.chat([{"role": "user", "content": "q"}], max_tokens=5000)
-    assert r.content == "42" and seen["max_tokens"] == 1024
+async def run(graph, q, tid="t", limit=24):
+    cfg = {"configurable": {"thread_id": tid}, "recursion_limit": limit}
+    await graph.ainvoke({"messages": [HumanMessage(q)], "critic_rounds": 0, "critique": [], "critic_usage": []}, cfg)
+    st = (await graph.aget_state(cfg)).values
+    return summarize_turn(st["messages"], st["critic_usage"]), st
 
 
-async def test_one_request_at_a_time():
-    active = peak = 0
+# ---------- tools (domain logic) ----------
 
-    async def handler(req):
-        nonlocal active, peak
-        active += 1
-        peak = max(peak, active)
-        await asyncio.sleep(0)  # yield to other tasks while "in flight"
-        active -= 1
-        return httpx.Response(200, json=ok_body())
-
-    c = LLMClient(settings(), transport=httpx.MockTransport(handler))
-    await asyncio.gather(*(c.chat([{"role": "user", "content": str(i)}]) for i in range(5)))
-    assert peak == 1 and c.calls == 5
+@pytest.mark.parametrize("years,per_pp,per_year", [(1, 4, 104), (4, 6, 160), (14.9, 6, 160), (15, 8, 208), (30, 8, 208)])
+def test_leave_accrual_bands(years, per_pp, per_year):
+    r = leave_accrual(years_of_service=years)
+    assert r["annual_hours_per_pay_period"] == per_pp and r["annual_hours_per_year"] == per_year
+    assert r["max_annual_carryover_hours"] == 240 and r["sick_hours_per_pay_period"] == 4
 
 
-# ---------- prompts ----------
+def test_leave_accrual_caps_and_part_time():
+    assert leave_accrual(years_of_service=5, overseas=True)["max_annual_carryover_hours"] == 360
+    assert leave_accrual(years_of_service=5, position="ses")["max_annual_carryover_hours"] == 720
+    pt = leave_accrual(years_of_service=5, schedule="part-time", hours_in_pay_status=52)
+    assert pt["annual_hours_this_pay_period"] == 4.0 and pt["sick_hours_this_pay_period"] == 2.6
+
+
+@pytest.mark.skipif(not HAVE_OPM, reason="OPM data not downloaded")
+def test_pay_lookup_matches_opm_table():
+    r = PayTable(DATA / "opm" / "gs_pay_2026.csv").lookup(grade=12, step=5, locality="Washington")
+    assert (r["locality_code"], r["annual_salary"], r["overtime_hourly_rate"]) == ("DCB", 116071, 55.89)
+
+
+def test_pay_lookup_without_data_is_a_tool_error(tmp_path: Path):
+    from langchain_core.tools import ToolException
+    with pytest.raises(ToolException, match="pay table not loaded"):
+        PayTable(tmp_path / "missing.csv").lookup(grade=12, step=5)
+
+
+# ---------- agent graph ----------
+
+async def test_agent_uses_calculator_and_passes_critic():
+    g = agent_for([call("leave_accrual_calc", {"years_of_service": 4}),
+                   AIMessage(content="6 hours per pay period [5 U.S.C. 6303(a)]; carryover 240 hours [5 U.S.C. 6304].")],
+                  [critique()])
+    s, st = await run(g, "How much leave with 4 years?")
+    assert s["answer"].startswith("6 hours") and s["tool_calls"] == 1 and st["critique"] == []
+    result = next(t for t in s["trace"] if t["type"] == "tool_result")
+    assert result["status"] == "success" and '"annual_hours_per_pay_period": 6' in result["content"]
+
+
+async def test_bad_tool_args_become_observation_not_crash():
+    g = agent_for([call("pay_lookup", {"grade": 99, "step": 5}),  # grade out of range -> validation error
+                   AIMessage(content="The provided policy documents do not cover this.")], [])
+    s, _ = await run(g, "pay for GS-99?")
+    err = next(t for t in s["trace"] if t["type"] == "tool_result")
+    assert err["status"] == "error" and s["tool_errors"] == 1 and "cover this" in s["answer"]
+
+
+async def test_critic_feedback_triggers_one_revision():
+    g = agent_for([call("search_policy", {"query": "annual leave accrual"}),
+                   AIMessage(content="8 hours per pay period [5 U.S.C. 6303(a)]."),
+                   AIMessage(content="6 hours (three-fourths day) per pay period [5 U.S.C. 6303(a)].")],
+                  [critique("8 hours contradicts three-fourths day"), critique()], retriever=OneChunkRetriever())
+    s, st = await run(g, "How much leave with 4 years?")
+    assert s["answer"].startswith("6 hours") and st["critic_rounds"] == 2
+    assert [t["type"] for t in s["trace"]].count("critic_feedback") == 1
+
+
+async def test_unsupported_answer_is_flagged_without_llm_critic():
+    g = agent_for([AIMessage(content="Carryover is 260 hours."), AIMessage(content="The provided policy documents do not cover this.")], [])
+    s, st = await run(g, "carryover after 16 years?")
+    assert "cover this" in s["answer"] and any(t["type"] == "critic_feedback" for t in s["trace"])
+
+
+async def test_step_limit_stops_runaway_loop():
+    g = agent_for([call("holiday_calendar", {}, str(i)) for i in range(50)], [])
+    with pytest.raises(GraphRecursionError):
+        await run(g, "loop", limit=6)
+
+
+async def test_session_memory_keeps_history():
+    g = agent_for([AIMessage(content="The provided policy documents do not cover this."),
+                   AIMessage(content="The provided policy documents do not cover this.")], [])
+    await run(g, "first question", tid="s1")
+    _, st = await run(g, "second question", tid="s1")
+    humans = [m.content for m in st["messages"] if isinstance(m, HumanMessage)]
+    assert humans == ["first question", "second question"]
+
+
+# ---------- prompts / citations ----------
 
 def chunk(i, text="Annual leave accrues at 6 hours per pay period.", cite=None):
     return Chunk(chunk_id=f"c{i}", text=text, citation=cite or f"5 U.S.C. 630{i}", clause_ids=[f"cl{i}"])
 
 
-def test_build_messages_includes_citations_and_question():
-    msgs, used = build_messages("How much leave?", [chunk(1), chunk(2)], None, context_tokens=8192, max_answer_tokens=512)
-    user = msgs[-1]["content"]
-    assert "[5 U.S.C. 6301]" in user and "Question: How much leave?" in user and len(used) == 2
-
-
-def test_build_messages_respects_budget():
-    big = [chunk(i, text="x" * 4000) for i in range(10)]  # ~1000 tokens each
-    msgs, used = build_messages("q", big, None, context_tokens=8192, max_answer_tokens=1024)
+def test_build_messages_budget_and_empty():
+    msgs, used = build_messages("q", [chunk(i, text="x" * 4000) for i in range(10)], None, context_tokens=8192, max_answer_tokens=1024)
     assert 0 < len(used) < 10
-
-
-def test_build_messages_without_chunks():
     msgs, used = build_messages("q", [], None, context_tokens=8192, max_answer_tokens=512)
     assert NO_CONTEXT_NOTE in msgs[-1]["content"] and used == []
 
 
-def test_extract_citations_drops_invented():
-    used = [chunk(3, cite="5 U.S.C. 6303(a)")]
-    ans = "Six hours [5 U.S.C. 6303(a)], see also [5 CFR 999.1] and [5 U.S.C. 6303(a)]."
-    assert extract_citations(ans, used) == ["5 U.S.C. 6303(a)"]
+def test_extract_citations_exact_finer_and_invented():
+    known = ["5 U.S.C. 6303(a)"]
+    ans = "Six hours [5 U.S.C. 6303(a)(2)] and [5 U.S.C. 6303(a)], not [5 CFR 999.1] or [5 U.S.C. 6303(ab)]."
+    assert extract_citations(ans, known) == ["5 U.S.C. 6303(a)(2)", "5 U.S.C. 6303(a)"]
 
 
-def test_extract_citations_accepts_finer_clause_only():
-    used = [chunk(3, cite="5 U.S.C. 6303(a)")]
-    ans = "Three-fourths day [5 U.S.C. 6303(a)(2)]; not [5 U.S.C. 6303(ab)] or [5 U.S.C. 6303(b)]."
-    assert extract_citations(ans, used) == ["5 U.S.C. 6303(a)(2)"]
+def test_known_citations_read_from_tool_json():
+    trace = [{"type": "tool_result", "status": "success",
+              "full_content": '{"citation": "5 U.S.C. 6303(f); 5 CFR 630.301", "carryover_citation": "5 U.S.C. 6304"}'}]
+    assert _known_citations_from_trace(trace) == ["5 U.S.C. 6303(f)", "5 CFR 630.301", "5 U.S.C. 6304"]
 
 
 # ---------- API ----------
 
-class FakeLLM:
-    def __init__(self):
-        self.messages = None
-
-    async def models(self):
-        return ["Qwen/Qwen3-8B"]
-
-    async def chat(self, messages, **kw):
-        self.messages = messages
-        return llm_mod.LLMResult(content="Six hours per pay period [5 U.S.C. 6303(a)].", tool_calls=[],
-                                 finish_reason="stop", prompt_tokens=100, completion_tokens=12,
-                                 latency_ms=5.0, attempts=1)
-
-    async def aclose(self):
-        pass
-
-
-class FakeRetriever:
-    name = "fake"
-
-    async def retrieve(self, query, k=5, filters=None):
-        return [chunk(3, cite="5 U.S.C. 6303(a)")]
-
-
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr("app.main.get_settings", lambda: settings())
+    monkeypatch.setattr("app.main.get_settings", lambda: Settings(_env_file=None, llm_base_url="https://llm.test/v1",
+                                                                  llm_api_key="k", llm_ca_cert_path=str(REPO_ROOT / ".env.example")))
+    monkeypatch.setattr("app.main.build_chat_model", lambda s, **kw: ScriptedChat(script=[]))
     with TestClient(app) as c:
-        c.app.state.llm = FakeLLM()
-        c.app.state.retriever = FakeRetriever()
         yield c
 
 
-def test_health(client):
-    r = client.get("/health").json()
-    assert r["status"] == "ok" and r["retriever"] == "fake"
+def test_agent_endpoint(client):
+    client.app.state.agent = agent_for([call("leave_accrual_calc", {"years_of_service": 4}),
+                                        AIMessage(content="6 hours [5 U.S.C. 6303(a)].")], [critique()])
+    r = client.post("/agent", json={"question": "leave with 4 years?"}).json()
+    assert r["status"] == "completed" and r["citations"] == ["5 U.S.C. 6303(a)"] and r["tool_calls"] == 1
+    assert r["session_id"] and all("full_content" not in t for t in r["trace"])
 
 
-def test_chat_returns_grounded_answer(client):
-    r = client.post("/chat", json={"question": "How much annual leave with 4 years of service?"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["citations"] == ["5 U.S.C. 6303(a)"] and body["grounded"] is True
-    assert body["usage"]["completion_tokens"] == 12 and "total" in body["latency_ms"]
-
-
-def test_chat_validates_input(client):
+def test_chat_endpoint_validates_input(client):
     assert client.post("/chat", json={"question": ""}).status_code == 422
 
 
-# ---------- live (opt-in: pytest -m live) ----------
+# ---------- live (opt-in: pytest -m live; uses the shared key) ----------
 
 @pytest.mark.live
-async def test_live_endpoint_roundtrip():
-    get_settings.cache_clear()
-    c = LLMClient(get_settings())
-    try:
-        r = await c.chat([{"role": "user", "content": "Reply with the single word OK."}], max_tokens=10)
-        assert "OK" in (r.content or "") and r.prompt_tokens > 0
-    finally:
-        await c.aclose()
+async def test_live_agent_leave_question():
+    from app.config import get_settings
+    from app.llm import build_chat_model
+    s = get_settings()
+    g = build_agent(build_chat_model(s), build_chat_model(s, max_tokens=400), build_tools(EmptyRetriever(), s.data_path()))
+    out, _ = await run(g, "Full-time, 4 years of service: annual leave hours per pay period?", tid="live")
+    assert "6" in out["answer"] and any(t.get("tool") == "leave_accrual_calc" for t in out["trace"])

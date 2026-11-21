@@ -1,20 +1,31 @@
 """HR Policy Navigator API.
 
 Run from backend/:  uv run uvicorn app.main:app --reload --port 8100
+
+/chat   single-prompt RAG baseline (one model call), kept for the baseline-vs-agent comparison
+/agent  LangGraph agent: planner -> tools -> critic, session memory, step trace
 """
 
+import asyncio
+import json
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from langchain_core.messages import HumanMessage
+from langgraph.errors import GraphRecursionError
+from openai import APIError
 from pydantic import BaseModel, Field
 
+from .agent import build_agent, summarize_turn
 from .config import get_settings
-from .llm import LLMClient, LLMError
+from .llm import build_chat_model
 from .prompts import build_messages
 from .retrieval import Chunk, build_retriever
+from .tools import build_tools
 
 
 class ChatTurn(BaseModel):
@@ -46,13 +57,30 @@ class ChatResponse(BaseModel):
     latency_ms: dict[str, float]
 
 
+class AgentRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    session_id: str | None = Field(default=None, description="Reuse to continue a conversation")
+
+
+class AgentResponse(BaseModel):
+    session_id: str
+    answer: str
+    citations: list[str]
+    status: str  # completed | step_limit | llm_error
+    critique: list[str]
+    tool_calls: int
+    tool_errors: int
+    trace: list[dict[str, Any]]
+    usage: Usage
+    latency_ms: float
+
+
 _CITE = re.compile(r"\[([^\[\]]{3,120})\]")
 
 
-def extract_citations(answer: str, used: list[Chunk]) -> list[str]:
-    """Citations the model wrote that match a retrieved chunk, exactly or as a finer clause of it
-    (e.g. "5 U.S.C. 6303(a)(2)" inside chunk "5 U.S.C. 6303(a)"). Invented citations are dropped."""
-    known = [c.citation for c in used]
+def extract_citations(answer: str, known: list[str]) -> list[str]:
+    """Citations the model wrote that match a known source, exactly or as a finer clause of it
+    (e.g. "5 U.S.C. 6303(a)(2)" inside "5 U.S.C. 6303(a)"). Invented citations are dropped."""
     seen: list[str] = []
     for m in (x.strip() for x in _CITE.findall(answer)):
         if any(m == k or (m.startswith(k) and m[len(k):len(k) + 1] == "(") for k in known) and m not in seen:
@@ -60,30 +88,59 @@ def extract_citations(answer: str, used: list[Chunk]) -> list[str]:
     return seen
 
 
+def _known_citations_from_trace(trace: list[dict[str, Any]]) -> list[str]:
+    """Every citation value returned by successful tool calls (tool results are JSON)."""
+    found: list[str] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if "citation" in k and isinstance(v, str):
+                    found.extend(part.strip() for part in v.split(";"))
+                else:
+                    walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    for t in trace:
+        if t["type"] == "tool_result" and t["status"] != "error":
+            try:
+                walk(json.loads(t["full_content"]))
+            except (ValueError, KeyError):
+                pass
+    return list(dict.fromkeys(found))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     s = get_settings()
-    app.state.settings = s
-    app.state.llm = LLMClient(s)
-    app.state.retriever = build_retriever(s.rag_service_url)
+    st = app.state
+    st.settings = s
+    st.gate = asyncio.Semaphore(s.llm_max_concurrency)  # the key allows one active request
+    st.llm = build_chat_model(s)
+    st.retriever = build_retriever(s.rag_service_url)
+    st.tools = build_tools(st.retriever, s.data_path())
+    st.agent = build_agent(build_chat_model(s), build_chat_model(s, max_tokens=400), st.tools,
+                           context_tokens=s.llm_context_tokens, max_answer_tokens=s.llm_default_max_tokens)
     yield
-    await app.state.llm.aclose()
-    if hasattr(app.state.retriever, "aclose"):
-        await app.state.retriever.aclose()
+    if hasattr(st.retriever, "aclose"):
+        await st.retriever.aclose()
 
 
-app = FastAPI(title="HR Policy Navigator", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="HR Policy Navigator", version="0.2.0", lifespan=lifespan)
 
 
 @app.get("/health")
 async def health(request: Request) -> dict[str, Any]:
     st = request.app.state
     try:
-        models = await st.llm.models()
+        models = [m.id async for m in st.llm.root_async_client.models.list()]
         llm = {"ok": st.settings.llm_model in models, "models": models}
     except Exception as exc:  # report, don't crash the health check
         llm = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-    return {"status": "ok" if llm["ok"] else "degraded", "llm": llm, "retriever": st.retriever.name}
+    return {"status": "ok" if llm["ok"] else "degraded", "llm": llm, "retriever": st.retriever.name,
+            "tools": [t.name for t in st.tools]}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -91,28 +148,60 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
     st = request.app.state
     s = st.settings
     t0 = time.perf_counter()
-
     chunks = await st.retriever.retrieve(req.question, k=req.k or s.retrieval_top_k, filters=req.filters)
     t_retrieve = (time.perf_counter() - t0) * 1000
 
     max_tokens = req.max_tokens or s.llm_default_max_tokens
-    messages, used = build_messages(
-        req.question, chunks, [t.model_dump() for t in req.history],
-        context_tokens=s.llm_context_tokens, max_answer_tokens=max_tokens,
-    )
+    messages, used = build_messages(req.question, chunks, [t.model_dump() for t in req.history],
+                                    context_tokens=s.llm_context_tokens, max_answer_tokens=max_tokens)
+    t1 = time.perf_counter()
     try:
-        result = await st.llm.chat(messages, max_tokens=max_tokens)
-    except LLMError as exc:
+        async with st.gate:
+            msg = await st.llm.bind(max_tokens=max_tokens).ainvoke(messages)
+    except APIError as exc:
         raise HTTPException(status_code=502, detail=f"LLM endpoint error: {exc}") from exc
-
-    answer = result.content or ""
+    um = msg.usage_metadata or {}
+    answer = str(msg.content or "")
     return ChatResponse(
-        answer=answer,
-        citations=extract_citations(answer, used),
-        chunks=used,
-        grounded=bool(used),
-        retriever=st.retriever.name,
-        usage=Usage(prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens, llm_calls=1),
-        latency_ms={"retrieve": round(t_retrieve, 1), "llm": result.latency_ms,
+        answer=answer, citations=extract_citations(answer, [c.citation for c in used]), chunks=used,
+        grounded=bool(used), retriever=st.retriever.name,
+        usage=Usage(prompt_tokens=um.get("input_tokens", 0), completion_tokens=um.get("output_tokens", 0), llm_calls=1),
+        latency_ms={"retrieve": round(t_retrieve, 1), "llm": round((time.perf_counter() - t1) * 1000, 1),
                     "total": round((time.perf_counter() - t0) * 1000, 1)},
+    )
+
+
+@app.post("/agent", response_model=AgentResponse)
+async def agent(req: AgentRequest, request: Request) -> AgentResponse:
+    st = request.app.state
+    s = st.settings
+    session_id = req.session_id or uuid.uuid4().hex
+    config = {"configurable": {"thread_id": session_id}, "recursion_limit": s.agent_max_steps * 2 + 4}
+    turn_input = {"messages": [HumanMessage(req.question)], "critic_rounds": 0, "critique": [], "critic_usage": []}
+    t0 = time.perf_counter()
+    status = "completed"
+    async with st.gate:
+        try:
+            await st.agent.ainvoke(turn_input, config)
+        except GraphRecursionError:
+            status = "step_limit"
+        except APIError as exc:
+            status = "llm_error"
+            error = str(exc)
+    snap = await st.agent.aget_state(config)
+    vals = snap.values
+    summary = summarize_turn(vals.get("messages", []), vals.get("critic_usage", []))
+    answer = summary["answer"]
+    if status == "step_limit" and not answer:
+        answer = f"I could not finish within the {s.agent_max_steps}-step limit. Please narrow the question."
+    elif status == "llm_error":
+        answer = f"The model endpoint failed: {error}"
+    citations = extract_citations(answer, _known_citations_from_trace(summary["trace"]))
+    for t in summary["trace"]:
+        t.pop("full_content", None)
+    return AgentResponse(
+        session_id=session_id, answer=answer, citations=citations,
+        status=status, critique=vals.get("critique", []), tool_calls=summary["tool_calls"],
+        tool_errors=summary["tool_errors"], trace=summary["trace"], usage=Usage(**summary["usage"]),
+        latency_ms=round((time.perf_counter() - t0) * 1000, 1),
     )

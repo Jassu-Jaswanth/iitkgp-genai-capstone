@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     rag_service_url: str = ""
     retrieval_top_k: int = 5
 
+    # Agent
+    agent_max_steps: int = 10  # Track B guardrail: agent capped at 10 steps per query
+    data_dir: str = "./data/raw"  # pay table + holidays (owned by the data teammate)
+
+    def data_path(self) -> Path:
+        p = Path(self.data_dir)
+        return p if p.is_absolute() else (REPO_ROOT / p).resolve()
+
     def ca_path(self, value: str) -> str:
         p = Path(value)
         return str(p if p.is_absolute() else (REPO_ROOT / p).resolve())
