@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from opentelemetry import context as otel_context
+from opentelemetry.propagate import extract
 from pydantic import BaseModel, Field
 
 from pipeline import (QueryInstructionEmbeddings, build_faiss, chunk_strategies, dedupe_by_chunk, load_sections,
@@ -25,6 +27,20 @@ RERANKER = os.getenv("RAG_RERANKER", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 MAX_K = 10
 
 
+def setup_tracing() -> str | None:
+    """Same Phoenix project as the backend; spans join the caller's trace via the W3C traceparent header.
+    Not registered globally, so FastAPI's own HTTP spans stay out of the trace."""
+    endpoint = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
+    if not endpoint:
+        return None
+    from openinference.instrumentation.langchain import LangChainInstrumentor
+    from phoenix.otel import register
+    provider = register(endpoint=endpoint, project_name=os.getenv("PHOENIX_PROJECT_NAME", "hr-policy-navigator"),
+                        batch=True, set_global_tracer_provider=False, verbose=False)
+    LangChainInstrumentor().instrument(tracer_provider=provider)
+    return endpoint
+
+
 class RetrieveRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     k: int = Field(5, ge=1, le=MAX_K)
@@ -34,6 +50,7 @@ class RetrieveRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     t0 = time.perf_counter()
+    tracing = setup_tracing()
     sections = load_sections()
     docs = chunk_strategies()[CHUNKING](sections)
     base = upgrad_embeddings()
@@ -42,7 +59,7 @@ async def lifespan(app: FastAPI):
     app.state.retriever = retrievers_for(docs, vs, MAX_K, reranker_model=RERANKER)[RETRIEVER]
     app.state.info = {"chunking": CHUNKING, "retriever": RETRIEVER, "query_instruction": QUERY_INSTRUCTION,
                       "reranker": RERANKER if "rerank" in RETRIEVER else None, "chunks": len(docs),
-                      "sections": len(sections), "startup_s": round(time.perf_counter() - t0, 1)}
+                      "sections": len(sections), "tracing": tracing, "startup_s": round(time.perf_counter() - t0, 1)}
     yield
 
 
@@ -59,7 +76,12 @@ def retrieve(req: RetrieveRequest, request: Request) -> dict:
     allowed = req.filters.get("source_type")
     if allowed and allowed not in ("statute", "regulation", "guidance"):
         raise HTTPException(422, "filters.source_type must be statute, regulation or guidance")
-    docs = request.app.state.retriever.invoke(req.query)
+    token = otel_context.attach(extract(dict(request.headers)))  # continue the backend's trace
+    try:
+        docs = request.app.state.retriever.invoke(req.query, config={"run_name": "rag_service.hybrid_rerank",
+                                                                     "metadata": request.app.state.info})
+    finally:
+        otel_context.detach(token)
     if allowed:
         docs = [d for d in docs if d.metadata["source_type"] == allowed]
     docs = dedupe_by_chunk(docs, req.k)

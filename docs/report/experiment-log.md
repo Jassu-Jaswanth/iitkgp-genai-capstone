@@ -174,3 +174,20 @@ Token counts use the bge tokenizer itself (the course's "count tokens, not words
 - **First RAG-backed answers:** the carryover question was right (240 h, cited 5 U.S.C. 6304), but the agent appended
   a false qualifier ("applies to … employees with less than 3 years"). It called the calculator with a default
   years value and narrated the band. Candidate for the eval failure taxonomy (hallucination via tool defaults).
+
+## E15. LLM-level tracing: retrieval, tools, model calls in one trace (21 Nov)
+- **Requirement:** the trace must show what the agent does (chunks retrieved, tool calls, model calls), not HTTP plumbing.
+- **API spans removed:** FastAPI 0.16x emits its own OpenTelemetry spans whenever a *global* tracer provider exists.
+  The Phoenix provider is now passed only to the LangChain instrumentor (`set_global_tracer_provider=False`).
+  The root span is now `LangGraph`.
+- **Retrieval as a LangChain `BaseRetriever`:** `PolicyRetriever` → OpenInference RETRIEVER spans with
+  `retrieval.documents` (content, citation, clause ids, score) instead of a JSON blob inside the tool output.
+- **One trace across two services:** the backend forwards a W3C `traceparent` to the RAG service, which attaches
+  it before invoking its retriever. Gotcha: OpenInference spans are not the OTel "current" span, so a plain
+  `inject()` sent nothing (RAG spans became separate root traces). Fix: `openinference...get_current_span()` →
+  `trace.set_span_in_context(span)` → `inject`.
+- **Result (bone-marrow question):** LangGraph → router (LLM) → planner (LLM) → tools → `search_policy` →
+  PolicyRetriever (5 chunks the agent saw) + `rag_service.hybrid_rerank` (10 after rerank) → EnsembleRetriever →
+  BM25Retriever (30 candidates) + VectorStoreRetriever (30) → planner (LLM) → critic (LLM). This shows the query the
+  agent chose ("leave for bone marrow donation", rewritten from the user's wording) and what each retrieval stage
+  returned, which is the evidence needed to classify retrieval misses vs generation errors.
