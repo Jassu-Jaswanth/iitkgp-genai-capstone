@@ -1,0 +1,28 @@
+[project]
+name = "hr-navigator-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "arize-phoenix-otel>=0.17.3",
+    "fastapi>=0.165.0",
+    "httpx>=0.28.1",
+    "langchain-core>=1.8.4",
+    "langchain-openai>=1.8.5",
+    "langgraph>=1.2.24",
+    "openinference-instrumentation-langchain>=0.1.89",
+    "pydantic-settings>=2.16.3",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "respx>=0.23.1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["live: calls the real upGrad endpoint (uses the shared key; run sparingly)"]
+addopts = "-m 'not live'"

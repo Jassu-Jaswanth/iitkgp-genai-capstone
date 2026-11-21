@@ -1,0 +1,39 @@
+# docker compose up --build  ->  agent API (:8100) + trace dashboard Phoenix (:6006)
+# Retrieval is a placeholder (agent answers "not covered") until RAG_SERVICE_URL points at the RAG service.
+services:
+  phoenix:                                   # trace dashboard: every LLM call, tool call and retrieval
+    image: arizephoenix/phoenix:latest
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      PHOENIX_ENABLE_AUTH: "false"           # local only; port bound to 127.0.0.1 (TODO(tracing): auth if shared)
+    volumes: [phoenix-data:/mnt/data]
+    ports: ["127.0.0.1:6006:6006"]
+
+  backend:                                   # LangGraph agent + /chat baseline
+    build: {context: ., dockerfile: backend/Dockerfile}
+    env_file: .env
+    environment:
+      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-}
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./.context/certs:/app/.context/certs:ro
+      - ./data/processed:/app/data/processed:ro
+    ports: ["8100:8100"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # TODO(rag): add the RAG service here (reads ./data/processed, serves POST /retrieve), then set
+  #   RAG_SERVICE_URL: http://rag:8200   on the backend.
+  # rag:
+  #   build: {context: ., dockerfile: rag/Dockerfile}
+  #   volumes: [./data/processed:/app/data/processed:ro]
+  #   ports: ["8200:8200"]
+
+  # TODO(frontend): add the chat/eval dashboard (frontend/) once it lands on main.
+
+volumes:
+  phoenix-data:
