@@ -62,6 +62,11 @@ document   "5 U.S.C. Chapter 63: Leave"                 (104 documents)
 - The same fact often appears twice: in the law **and** in an OPM fact sheet. Both are correct to cite.
 - The embedding model (bge-small) reads at most 512 tokens per chunk.
 
+## The golden set (the exam), not the corpus
+`data/processed/` is what the RAG system **reads**. The questions that **grade** it are in `eval/data/gold_v1.jsonl`:
+50 Q&A pairs, each with the citation of the clause that answers it (e.g. `5 U.S.C. 6304(a)`) and its `clause_id`
+in this corpus. That link is how we measure whether retrieval found the right rule. Details: `eval/README.md`.
+
 ## Rebuild it
 Scripts are on the `jaswanth/hr-policy-navigator` branch (no keys needed, a few minutes):
 ```bash

@@ -1,6 +1,6 @@
 # Held-out evaluation set (v1): instructions for the team
 
-The agent was tuned against a 50-question dev set (branch `jaswanth/server`), so its score there is optimistic.
+The agent was tuned against the 50-question golden dev set (`data/gold_v1.jsonl`), so its score there is optimistic.
 The **held-out set** is the number we report. It only works if it stays unseen:
 
 - **Written by someone who did not tune the agent or the prompts.** Don't run these questions through the system

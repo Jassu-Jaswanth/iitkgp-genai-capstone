@@ -58,8 +58,8 @@ user question
   `eval/HELDOUT.md`. Someone who didn't tune the agent should write it.
 - **Check it:** `python eval/validate_gold.py eval/data/heldout_v1.jsonl --strict`.
 - **Run it:** `python eval/run_eval.py --mode agent --gold eval/data/heldout_v1.jsonl`.
-- **Example format:** `eval/data/gold_example.jsonl` (5 items). A 50-item verified dev set lives on the
-  `jaswanth/server` branch.
+- **Golden set (done):** `eval/data/gold_v1.jsonl`, 50 verified questions. 13 of them expect the TODO tools,
+  so they double as tests for the tool builders. It's a dev set (we tuned on it), so the held-out set is what we report.
 - **Code TODOs:** `eval/run_eval.py` → `TODO(eval)` (LLM-judge faithfulness score, links to traces).
 
 ## 4. Trace dashboard ✅ (small TODOs)
