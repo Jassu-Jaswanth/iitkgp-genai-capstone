@@ -221,7 +221,7 @@ def upgrad_embeddings() -> OpenAIEmbeddings:
     env = _env()
     ctx = ssl.create_default_context(cafile=str((ROOT / env["EMBEDDING_CA_CERT_PATH"]).resolve()))
     return OpenAIEmbeddings(model=env["EMBEDDING_MODEL"], base_url=env["EMBEDDING_BASE_URL"], api_key=env["EMBEDDING_API_KEY"],
-                            check_embedding_ctx_length=False, chunk_size=16, max_retries=5,
+                            check_embedding_ctx_length=False, chunk_size=16, max_retries=5, request_timeout=60,
                             http_client=httpx.Client(verify=ctx), http_async_client=httpx.AsyncClient(verify=ctx))
 
 
