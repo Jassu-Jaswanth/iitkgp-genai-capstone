@@ -1,0 +1,27 @@
+# docker compose up --build            -> backend + dashboard (placeholder retriever unless RAG_SERVICE_URL is set)
+# docker compose --profile rag up      -> also the local RAG service (local/full-stack branch only)
+services:
+  backend:
+    build: {context: ., dockerfile: backend/Dockerfile}
+    env_file: .env
+    environment:
+      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-}
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./.context/certs:/app/.context/certs:ro
+      - ./data/raw/opm:/app/data/raw/opm:ro
+    ports: ["8100:8100"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  frontend:
+    build: {context: ., dockerfile: frontend/Dockerfile}
+    environment:
+      API_URL: http://backend:8100
+    volumes:
+      - ./eval/results:/app/eval/results:ro
+    ports: ["8501:8501"]
+    depends_on:
+      backend: {condition: service_healthy}
