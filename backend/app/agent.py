@@ -20,8 +20,13 @@ from pydantic import BaseModel, Field
 PLANNER_PROMPT = """You are the HR Policy Navigator agent for US federal employees.
 Tools: search_policy (cited statutes/regulations/OPM guidance), leave_accrual_calc, pay_lookup, holiday_calendar, escalate_to_hr.
 Rules:
-- For any policy question, call search_policy BEFORE answering. Query with the name of the rule.
-- Never do leave or pay arithmetic yourself; use leave_accrual_calc or pay_lookup.
+- PRIVACY FIRST: if asked about another named person's pay, leave balance or records, reply that you cannot
+  share or access individual employees' records because they are private. Do not say "not covered".
+- Required tools by question type (call them even if search_policy found nothing):
+  leave accrual, sick leave accrual or annual leave carryover -> leave_accrual_calc;
+  salary, hourly or overtime pay -> pay_lookup; holiday dates -> holiday_calendar.
+- For any other policy question, call search_policy BEFORE answering. Query with the name of the rule.
+- Never do leave or pay arithmetic yourself.
 - Answer only from tool results. A calculator or lookup result IS evidence: use its numbers and cite its
   citation fields in square brackets exactly as given, e.g. [5 U.S.C. 6303(a)].
 - Say "The provided policy documents do not cover this." ONLY if no tool returned the needed information.
@@ -34,9 +39,31 @@ CRITIC_PROMPT = """You review a draft answer from an HR policy assistant against
 Each evidence block is labelled with the tool that produced it. Outputs of leave_accrual_calc, pay_lookup and
 holiday_calendar are AUTHORITATIVE computed facts with their own citations: a claim matching them is supported.
 List every claim in the draft that no evidence block supports or that contradicts one (numbers, eligibility,
-limits, citations). If every claim is supported, return an empty list. Do not judge style or completeness."""
+limits). If every claim is supported, return an empty list. Do not judge style, completeness or citation format,
+and never flag a claim only because it lacks a statutory citation."""
 
 NOT_COVERED = "do not cover this"
+
+ROUTER_PROMPT = """Classify the user's LATEST request for a US federal HR policy assistant (earlier turns are context).
+hr_policy: federal leave, pay, holidays, benefits rules, HR processes, or the user's OWN situation, including
+  follow-ups to an HR answer and requests to escalate or complain.
+individual_records: asks for ANOTHER specific person's pay, grade, leave balance, performance or personal records.
+out_of_scope: not about US federal HR policy (private-company benefits, investment advice, unrelated topics).
+chitchat: greetings or thanks only."""
+
+FIXED_REPLIES = {
+    "individual_records": "I can't share or look up another employee's pay, leave or personal records; they are "
+                          "private and I have no access to individual records. Their HR office or the employee "
+                          "can help through official channels.",
+    "out_of_scope": "The provided policy documents do not cover this. I can help with US federal leave, pay, "
+                    "holiday and related HR rules.",
+    "chitchat": "Hello! Ask me about federal leave, pay, holidays or other HR rules.",
+}
+
+
+class Route(BaseModel):
+    reason: str = Field(description="One short sentence on what the user is asking for")
+    route: Literal["hr_policy", "individual_records", "out_of_scope", "chitchat"]
 
 
 class Critique(BaseModel):
@@ -48,6 +75,7 @@ class Critique(BaseModel):
 
 class AgentState(MessagesState):
     # Reset at the start of every turn by the caller (see main.py): per-turn counters, not session memory.
+    route: str
     critic_rounds: int
     critique: list[str]
     critic_usage: list[dict]
@@ -61,9 +89,30 @@ def _turn(messages: list[BaseMessage]) -> list[BaseMessage]:
     return messages
 
 
-def build_agent(llm, critic_llm, tools: list, *, context_tokens: int = 8192, max_answer_tokens: int = 512,
-                max_critic_rounds: int = 1, checkpointer=None):
+def build_agent(llm, critic_llm, tools: list, *, router_llm=None, context_tokens: int = 8192,
+                max_answer_tokens: int = 512, max_critic_rounds: int = 1, checkpointer=None):
     planner_llm = llm.bind_tools(tools)
+    router = (router_llm or critic_llm).with_structured_output(Route, method="function_calling")
+
+    async def route_request(state: AgentState) -> dict[str, Any]:
+        """Course pattern (query routing): classify first; guard privacy and scope before any tool use."""
+        msgs = state["messages"]
+        context = [m for m in msgs[:-1] if isinstance(m, (HumanMessage, AIMessage)) and m.content
+                   and not m.additional_kwargs.get("critic")][-2:]
+        convo = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {str(m.content)[:300]}" for m in context)
+        try:
+            r = await router.ainvoke([SystemMessage(ROUTER_PROMPT),
+                                      HumanMessage(f"Earlier turns:\n{convo or '(none)'}\n\nLatest request: {msgs[-1].content}")])
+            route = r.route
+        except Exception:  # never block the user because the router failed
+            route = "hr_policy"
+        out: dict[str, Any] = {"route": route}
+        if route in FIXED_REPLIES:
+            out["messages"] = [AIMessage(content=FIXED_REPLIES[route], additional_kwargs={"route": route})]
+        return out
+
+    def after_route(state: AgentState) -> Literal["planner", "__end__"]:
+        return "planner" if state.get("route", "hr_policy") == "hr_policy" else END
     critic = critic_llm.with_structured_output(Critique, method="function_calling", include_raw=True)
     trim_budget = context_tokens - max_answer_tokens - 1200  # room for system prompt + tool schemas
 
@@ -113,7 +162,8 @@ def build_agent(llm, critic_llm, tools: list, *, context_tokens: int = 8192, max
         if issues and update["critic_rounds"] <= max_critic_rounds:
             update["messages"] = [HumanMessage(
                 "Reviewer found problems in your draft:\n- " + "\n- ".join(issues) +
-                "\nFix them using the tool results (call tools again if needed) and give a corrected final answer.",
+                "\nFix them using the tool results (call tools again if needed). Reply with ONLY the corrected final "
+                "answer for the user: do not mention the review, earlier drafts or corrections.",
                 additional_kwargs={"critic": True})]
         raw = res.get("raw")
         update["critic_usage"] = [*state.get("critic_usage", []),
@@ -125,10 +175,12 @@ def build_agent(llm, critic_llm, tools: list, *, context_tokens: int = 8192, max
         return "planner" if isinstance(last, HumanMessage) and last.additional_kwargs.get("critic") else END
 
     g = StateGraph(AgentState)
+    g.add_node("router", route_request)
     g.add_node("planner", planner)
     g.add_node("tools", ToolNode(tools, handle_tool_errors=True))
     g.add_node("critic", review)
-    g.add_edge(START, "planner")
+    g.add_edge(START, "router")
+    g.add_conditional_edges("router", after_route)
     g.add_conditional_edges("planner", route_after_planner)
     g.add_edge("tools", "planner")
     g.add_conditional_edges("critic", route_after_critic)
@@ -162,6 +214,9 @@ def summarize_turn(messages: list[BaseMessage], critic_usage: list[dict] | None 
     for cu in critic_usage or []:
         trace.append({"type": "critic_review", "issues": cu.get("issues", [])})
     tool_calls = sum(1 for t in trace if t["type"] == "tool_call")
-    return {"answer": answer, "trace": trace, "tool_calls": tool_calls,
+    route = next((m.additional_kwargs.get("route") for m in turn if isinstance(m, AIMessage)
+                  and m.additional_kwargs.get("route")), "hr_policy")
+    trace.insert(0, {"type": "route", "route": route})
+    return {"answer": answer, "trace": trace, "tool_calls": tool_calls, "route": route,
             "tool_errors": sum(1 for t in trace if t["type"] == "tool_result" and t["status"] == "error"),
             "usage": {"prompt_tokens": pt, "completion_tokens": ct, "llm_calls": llm_calls}}

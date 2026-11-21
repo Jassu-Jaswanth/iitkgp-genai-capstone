@@ -64,6 +64,7 @@ class AgentRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     session_id: str
+    route: str
     answer: str
     citations: list[str]
     status: str  # completed | step_limit | llm_error
@@ -177,7 +178,8 @@ async def agent(req: AgentRequest, request: Request) -> AgentResponse:
     s = st.settings
     session_id = req.session_id or uuid.uuid4().hex
     config = {"configurable": {"thread_id": session_id}, "recursion_limit": s.agent_max_steps * 2 + 4}
-    turn_input = {"messages": [HumanMessage(req.question)], "critic_rounds": 0, "critique": [], "critic_usage": []}
+    turn_input = {"messages": [HumanMessage(req.question)], "route": "hr_policy", "critic_rounds": 0,
+                  "critique": [], "critic_usage": []}
     t0 = time.perf_counter()
     status = "completed"
     async with st.gate:
@@ -200,7 +202,7 @@ async def agent(req: AgentRequest, request: Request) -> AgentResponse:
     for t in summary["trace"]:
         t.pop("full_content", None)
     return AgentResponse(
-        session_id=session_id, answer=answer, citations=citations,
+        session_id=session_id, route=summary["route"], answer=answer, citations=citations,
         status=status, critique=vals.get("critique", []), tool_calls=summary["tool_calls"],
         tool_errors=summary["tool_errors"], trace=summary["trace"], usage=Usage(**summary["usage"]),
         latency_ms=round((time.perf_counter() - t0) * 1000, 1),

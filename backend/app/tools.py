@@ -43,7 +43,7 @@ def leave_accrual(years_of_service: float, schedule: str = "full-time", position
     else:
         divisor = 20 if years < 3 else (13 if years < 15 else 10)
         out.update(annual_rule=f"1 hour for each {divisor} hours in a pay status", citation="5 U.S.C. 6303(a)",
-                   sick_rule="1 hour for each 20 hours in a pay status")
+                   sick_rule="1 hour for each 20 hours in a pay status", sick_citation="5 U.S.C. 6307(a)")
         if hours_in_pay_status is not None:
             out["annual_hours_this_pay_period"] = round(hours_in_pay_status / divisor, 2)
             out["sick_hours_this_pay_period"] = round(hours_in_pay_status / 20, 2)
@@ -90,7 +90,8 @@ class PayTable:
         r = self.rows[(code, grade)]
         return {"grade": f"GS-{grade}", "step": step, "locality_code": code, "locality": LOCALITY_NAMES.get(code, code),
                 "year": 2026, "annual_salary": int(float(r[f"ANNUAL{step}"])), "hourly_rate": float(r[f"HOURLY{step}"]),
-                "overtime_hourly_rate": float(r[f"OVERTIME{step}"]), "source": "OPM 2026 General Schedule pay tables"}
+                "overtime_hourly_rate": float(r[f"OVERTIME{step}"]),
+                "citation": f"OPM 2026 General Schedule pay table ({code})"}
 
 
 # ---------------------------------------------------------------- federal holidays (OPM)
@@ -114,7 +115,8 @@ class HolidayCalendar:
         if end < start:
             raise ToolException("end_date is before start_date")
         hits = [{"date": d.isoformat(), "weekday": d.strftime("%A"), "holiday": n} for d, n in self.days if start <= d <= end]
-        return {"start_date": start.isoformat(), "end_date": end.isoformat(), "count": len(hits), "holidays": hits[:20]}
+        return {"start_date": start.isoformat(), "end_date": end.isoformat(), "count": len(hits), "holidays": hits[:20],
+                "citation": "OPM federal holidays calendar"}
 
 
 # ---------------------------------------------------------------- search + escalation

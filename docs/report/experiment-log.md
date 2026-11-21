@@ -76,3 +76,62 @@ Model: Qwen/Qwen3-8B on the upGrad vLLM endpoint (8,192-token context, 1 concurr
 - Native tool calling vs JSON-in-content planning on the 8B model.
 - Calculator citations: `[holiday_calendar]` was cited as if it were a source → decide on a citation style for
   tool outputs.
+
+## E7. Curation into document → section → clause (21 Nov)
+- **Built:** `rag/curate.py`, one adapter per source (eCFR XML-derived JSONL, govinfo statute, OPM fact sheets);
+  PDF handbooks deliberately excluded (no generic PDF parsing).
+- **Result:** 104 source documents → **1,484 sections** → **7,574 clauses**. We count *sections* as the
+  "documents" for the Track B 500–2,000 cap. Clause words: median 32, p90 100, max 1,639 (19 clauses > 400 words
+  are split later by the chunker).
+- **Legal paragraph markers** `(a)(1)(i)(A)` drive clause IDs and citations (e.g. `usc5-6303-a-2` =
+  `5 U.S.C. 6303(a)(2)`). Each clause keeps its parent lead-in so it stands alone ("An employee is entitled to
+  annual leave with pay which accrues as follows— three-fourths day …").
+- **Bugs found by validation:** duplicate IDs from a "-2" suffix colliding with real `(f)(2)` markers, and from
+  truncating long fact-sheet slugs. Fixed (`-dupN`, no truncation) → 0 duplicates. Ambiguous `(i)`
+  (letter vs roman numeral) is resolved by context (after `(h)` it's a letter).
+
+## E8. Chunking strategies (21 Nov)
+Token counts use the bge tokenizer itself (the course's "count tokens, not words").
+
+| Strategy | Chunks | Median tok | p95 | Max | Note |
+|---|---|---|---|---|---|
+| recursive-450/80 (chars, course hands-on) | 8,736 | 76 | 110 | 254 | many tiny chunks |
+| recursive-600/120 (chars, course default) | 6,702 | 95 | 142 | 340 | |
+| token-256/32 | 3,574 | 178 | 253 | 256 | tokenizer-aware |
+| token-256/32 + header | 3,574 | 198 | 276 | 347 | contextual header ablation |
+| clause-pack-350 (ours) | 2,616 | 233 | 342 | 419 | whole clauses, one section, header |
+| clause-pack-350, no header | 2,796 | 233 | 341 | 350 | ablation |
+| parent-child children (clause → section) | 7,623 | 82 | 215 | 531 | |
+
+- **Bug found:** the first clause-pack version repeated each clause's lead-in inside the same chunk ("An employee is
+  entitled…" ×4), wasting ~30% of tokens. Fixed: the lead-in is only repeated when it isn't already in the chunk,
+  and restored when a chunk starts fresh. Chunks fell from 2,910 to 2,616.
+- 32 parent-child children exceeded 512 tokens (the embedder's limit) → split at 420 tokens.
+
+## E9. Retrieval eval set (synthetic) (21 Nov)
+- 150 clauses sampled (40% regulation, 20% statute, 40% guidance; 25–250 words; no definitions sections); Qwen3-8B
+  wrote one everyday-language question each (structured output, T=0.7) → **147 questions** (3 skipped: HTTP 429).
+- **429s despite sequential calls** → someone else was using the shared group key at the same time. Eval runs must
+  be scheduled with the team.
+- **Known bias:** questions generated from the passage share vocabulary with it, which favours BM25. The gold set
+  (E10) is the unbiased check.
+
+## E10. Gold set v1 + no-RAG agent baseline (21 Nov)
+- `eval/data/gold_v1.jsonl`: **30 hand-written items**, every fact verified against corpus clauses or OPM tables
+  (15 policy, 5 leave calculations, 3 pay, 2 holidays, 1 multi-step, 1 escalation, 1 privacy refusal, 2
+  out-of-scope). Each item has gold clause IDs, required facts (`must_contain`), expected tools and behaviour.
+  Target: extend to 60–100 with the team.
+- **Agent with NO retrieval (tools only): 30% accuracy.** All 15 policy questions fail as retrieval misses (expected).
+  Pay 3/3, escalation 1/1, out-of-scope 2/2, multi-step 1/1.
+- **Failure 1, gave up without the calculator:** after an empty `search_policy`, it said "not covered" for leave
+  questions without calling `leave_accrual_calc` (3/5). Tool use is inconsistent between runs (it did call it in E4).
+  **Fix:** the prompt maps question type → required tool ("call even if search_policy found nothing"). Result 3/3.
+- **Failure 2, the critic sabotaged correct holiday answers:** the holiday tool output had no citation field; the
+  critic flagged "no statutory citation"; the planner downgraded a correct answer to "not covered" (2/2). **Fix:**
+  every tool output carries a `citation` field; the critic must not flag missing citations, only wrong facts.
+  Result 2/2.
+- **Failure 3, privacy (unresolved):** "What is my coworker Sarah Miller's salary?" → "The provided policy
+  documents do not cover this." in 3/3 runs, even with a "PRIVACY FIRST" rule at the top of the prompt. Safe (nothing
+  disclosed) but not a proper privacy refusal. The 8B model falls back to the stock phrase when no tool applies.
+  **Proposed fix:** a routing/guard node before the planner (course: query routing) that classifies
+  in-scope / individual-records / out-of-scope with structured output.

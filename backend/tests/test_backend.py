@@ -43,6 +43,10 @@ def call(name, args, i="1"):
     return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": f"call-{i}", "type": "tool_call"}])
 
 
+def route(name="hr_policy"):
+    return AIMessage(content="", tool_calls=[{"name": "Route", "args": {"reason": "test", "route": name}, "id": "rt", "type": "tool_call"}])
+
+
 def critique(*issues):
     return AIMessage(content="", tool_calls=[{"name": "Critique", "args": {"issues": list(issues)}, "id": "crit", "type": "tool_call"}])
 
@@ -62,14 +66,17 @@ class OneChunkRetriever:
                       citation="5 U.S.C. 6303(a)", clause_ids=["usc5-6303-a-2"], score=0.9)]
 
 
-def agent_for(planner_script, critic_script, retriever=None, data_dir=DATA, **kw):
+def agent_for(planner_script, critic_script, retriever=None, data_dir=DATA, routes=None, **kw):
     tools = build_tools(retriever or EmptyRetriever(), data_dir)
-    return build_agent(ScriptedChat(script=planner_script), ScriptedChat(script=critic_script), tools, **kw)
+    router = ScriptedChat(script=routes if routes is not None else [route() for _ in range(5)])
+    return build_agent(ScriptedChat(script=planner_script), ScriptedChat(script=critic_script), tools,
+                       router_llm=router, **kw)
 
 
 async def run(graph, q, tid="t", limit=24):
     cfg = {"configurable": {"thread_id": tid}, "recursion_limit": limit}
-    await graph.ainvoke({"messages": [HumanMessage(q)], "critic_rounds": 0, "critique": [], "critic_usage": []}, cfg)
+    await graph.ainvoke({"messages": [HumanMessage(q)], "route": "hr_policy", "critic_rounds": 0, "critique": [],
+                         "critic_usage": []}, cfg)
     st = (await graph.aget_state(cfg)).values
     return summarize_turn(st["messages"], st["critic_usage"]), st
 
@@ -151,6 +158,22 @@ async def test_session_memory_keeps_history():
     _, st = await run(g, "second question", tid="s1")
     humans = [m.content for m in st["messages"] if isinstance(m, HumanMessage)]
     assert humans == ["first question", "second question"]
+
+
+async def test_router_privacy_short_circuits_without_tools():
+    g = agent_for([call("pay_lookup", {"grade": 12, "step": 5})], [], routes=[route("individual_records")])
+    s, _ = await run(g, "What is Sarah's salary?")
+    assert s["route"] == "individual_records" and s["tool_calls"] == 0 and "private" in s["answer"]
+
+
+async def test_router_out_of_scope_and_failure_fallback():
+    g = agent_for([], [], routes=[route("out_of_scope")])
+    s, _ = await run(g, "Google 401k match?")
+    assert s["route"] == "out_of_scope" and "do not cover" in s["answer"]
+    g = agent_for([AIMessage(content="The provided policy documents do not cover this.")], [],
+                  routes=[AIMessage(content="not json")])  # router output unparseable -> falls through to planner
+    s, _ = await run(g, "anything")
+    assert s["route"] == "hr_policy"
 
 
 # ---------- prompts / citations ----------

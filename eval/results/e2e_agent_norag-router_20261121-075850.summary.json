@@ -1,0 +1,24 @@
+{
+  "mode": "agent",
+  "n": 6,
+  "accuracy": 0.833,
+  "behavior_ok": 0.833,
+  "completion_rate": 1.0,
+  "cited_rate_policy": 1.0,
+  "retrieval_recall": 0.0,
+  "avg_tool_calls": 0.67,
+  "avg_llm_calls": 2,
+  "avg_prompt_tokens": 2249,
+  "avg_completion_tokens": 130,
+  "p50_latency_ms": 2627,
+  "failures": {
+    "retrieval_miss": 1
+  },
+  "by_category": {
+    "calc-leave": "0/1",
+    "escalate": "1/1",
+    "out-of-scope": "2/2",
+    "pay": "1/1",
+    "refuse": "1/1"
+  }
+}

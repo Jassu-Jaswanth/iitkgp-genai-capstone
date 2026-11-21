@@ -1,0 +1,22 @@
+{
+  "mode": "agent",
+  "n": 6,
+  "accuracy": 0.833,
+  "behavior_ok": 0.833,
+  "completion_rate": 1.0,
+  "cited_rate_policy": 1.0,
+  "retrieval_recall": 0.0,
+  "avg_tool_calls": 0.83,
+  "avg_llm_calls": 2.67,
+  "avg_prompt_tokens": 2782,
+  "avg_completion_tokens": 90,
+  "p50_latency_ms": 2725,
+  "failures": {
+    "reasoning_error": 1
+  },
+  "by_category": {
+    "calc-leave": "3/3",
+    "holiday": "2/2",
+    "refuse": "0/1"
+  }
+}
