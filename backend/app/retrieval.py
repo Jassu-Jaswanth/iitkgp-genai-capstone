@@ -67,7 +67,7 @@ class PolicyRetriever(BaseRetriever):
     still runs and answers "not covered" (this is how main works before the RAG service exists).
 
     TODO(rag): build the RAG service (see docs/TODO.md): POST /retrieve {query, k, filters} -> {"chunks": [...]},
-    input data = data/processed/clauses.jsonl. Then set RAG_SERVICE_URL in .env. Nothing in this file changes."""
+    input data = data/corpus/clauses.jsonl. Then set RAG_SERVICE_URL in .env. Nothing in this file changes."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
     base_url: str = ""

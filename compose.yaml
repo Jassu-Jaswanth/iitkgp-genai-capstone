@@ -23,7 +23,7 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - ./.context/certs:/app/.context/certs:ro
-      - ./data/processed:/app/data/processed:ro
+      - ./data:/app/data:ro
     ports: ["8100:8100"]
     depends_on:
       phoenix: {condition: service_healthy}  # otherwise early traces are dropped while Phoenix migrates
@@ -33,11 +33,11 @@ services:
       timeout: 10s
       retries: 3
 
-  # TODO(rag): add the RAG service here (reads ./data/processed, serves POST /retrieve), then set
+  # TODO(rag): add the RAG service here (reads ./data/corpus, serves POST /retrieve), then set
   #   RAG_SERVICE_URL: http://rag:8200   on the backend.
   # rag:
   #   build: {context: ., dockerfile: rag/Dockerfile}
-  #   volumes: [./data/processed:/app/data/processed:ro]
+  #   volumes: [./data/corpus:/app/data/corpus:ro]
   #   ports: ["8200:8200"]
 
   # TODO(frontend): add the chat/eval dashboard (frontend/) once it lands on main.

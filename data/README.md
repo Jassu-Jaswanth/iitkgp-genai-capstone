@@ -1,4 +1,4 @@
-# data/
+# data/: the FedHR-Policy dataset
 
-`processed/` holds the curated HR rules (for the RAG build) and two tables (for tools).
-What's inside and how to use it: **[docs/DATASET.md](../docs/DATASET.md)**.
+`corpus/` (what RAG reads) · `tables/` (what tools read) · `queries/` (golden questions for evaluation).
+Dataset card: **[docs/DATASET.md](../docs/DATASET.md)**.

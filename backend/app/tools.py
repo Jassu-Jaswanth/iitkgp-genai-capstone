@@ -76,21 +76,21 @@ def make_search_policy(retriever: Retriever) -> BaseTool:
 #   note:  years_of_service is optional for carryover-only questions, otherwise the model invents a value.
 #
 # TODO(tools): pay_lookup  (2026 GS salary/hourly/overtime by grade, step, locality)
-#   data:  data/processed/opm/gs_pay_2026.csv (columns LOCNAME, GRADE, ANNUAL1..10, HOURLY1..10, OVERTIME1..10)
+#   data:  data/tables/gs_pay_2026.csv (columns LOCNAME, GRADE, ANNUAL1..10, HOURLY1..10, OVERTIME1..10)
 #   args:  grade 1-15, step 1-10, locality code (RUS, DCB, NY, SF...) or area name
 #   rule:  description must say "dollar amounts only, never guess a grade".
 #
 # TODO(tools): holiday_calendar  (federal holidays between two dates)
-#   data:  data/processed/opm/holidays.csv (date, holiday), 2021-2030
+#   data:  data/tables/holidays.csv (date, holiday), 2021-2030
 #
 # TODO(tools): escalate_to_hr  (human-in-the-loop: DRAFT a case, never submit; return a ticket id + "pending")
 #
 # After adding a tool: register it in build_tools(), add a "question type -> tool" line to PLANNER_RULES in
-# agent.py, add tests (backend/tests) and gold items that expect it (eval/data).
+# agent.py, add tests (backend/tests) and gold items that expect it (data/queries/).
 
 
 def build_tools(retriever: Retriever, data_dir: Path) -> list[BaseTool]:
-    """All tools the agent may call. `data_dir` (data/processed) holds tables for the TODO tools."""
+    """All tools the agent may call. `data_dir` (data/) holds tables/ for the TODO tools."""
     tools: list[BaseTool] = [make_search_policy(retriever)]
     # TODO(tools): tools += [leave_accrual_calc, pay_lookup(data_dir), holiday_calendar(data_dir), escalate_to_hr]
     return tools

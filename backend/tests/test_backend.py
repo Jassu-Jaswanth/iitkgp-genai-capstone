@@ -16,7 +16,7 @@ from app.prompts import NO_CONTEXT_NOTE, build_messages, parse_strategy_output
 from app.retrieval import Chunk
 from app.tools import build_tools
 
-DATA = REPO_ROOT / "data" / "processed"
+DATA = REPO_ROOT / "data"
 
 
 class ScriptedChat(BaseChatModel):

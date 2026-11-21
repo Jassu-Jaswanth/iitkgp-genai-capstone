@@ -27,7 +27,7 @@ user question
 ## 1. RAG service ⬜ (owner: RAG teammate)
 **Think of it as:** a librarian. You hand it a question; it hands back the 5 most useful paragraphs.
 
-- **Input data:** `data/processed/clauses.jsonl` (see `docs/DATASET.md`).
+- **Input data:** `data/corpus/clauses.jsonl` (dataset card: `docs/DATASET.md`).
 - **Build:** load → chunk → embed → index → search → rerank. Any stack.
 - **Must serve:** `POST /retrieve` with `{"query", "k", "filters"}` → `{"chunks": [{"chunk_id", "text", "citation", "clause_ids", "score"}]}`.
 - **Then:** set `RAG_SERVICE_URL=http://...` in `.env`. No agent code changes.
@@ -41,8 +41,8 @@ user question
 | Tool | What it does | Data |
 |---|---|---|
 | `leave_accrual_calc` | leave hours per pay period, carryover cap | rules in the code comment |
-| `pay_lookup` | 2026 GS salary / hourly / overtime | `data/processed/opm/gs_pay_2026.csv` |
-| `holiday_calendar` | federal holidays between two dates | `data/processed/opm/holidays.csv` |
+| `pay_lookup` | 2026 GS salary / hourly / overtime | `data/tables/gs_pay_2026.csv` |
+| `holiday_calendar` | federal holidays between two dates | `data/tables/holidays.csv` |
 | `escalate_to_hr` | drafts an HR case for a human; never submits | none |
 
 - **Where:** `backend/app/tools.py` → `TODO(tools)` (each has args, rules, data).
@@ -54,11 +54,11 @@ user question
 ## 3. Evaluation ⬜ (owner: everyone)
 **Think of it as:** an exam the agent must pass, written before we peek at its answers.
 
-- **Write the held-out set:** fill `eval/data/heldout_v1.jsonl` (40 items, `<FILL>` placeholders), following
+- **Write the held-out set:** fill `data/queries/heldout_v1.jsonl` (40 items, `<FILL>` placeholders), following
   `eval/HELDOUT.md`. Someone who didn't tune the agent should write it.
-- **Check it:** `python eval/validate_gold.py eval/data/heldout_v1.jsonl --strict`.
-- **Run it:** `python eval/run_eval.py --mode agent --gold eval/data/heldout_v1.jsonl`.
-- **Golden set (done):** `eval/data/gold_v1.jsonl`, 50 verified questions. 13 of them expect the TODO tools,
+- **Check it:** `python eval/validate_gold.py data/queries/heldout_v1.jsonl --strict`.
+- **Run it:** `python eval/run_eval.py --mode agent --gold data/queries/heldout_v1.jsonl`.
+- **Golden set (done):** `data/queries/gold_v1.jsonl`, 50 verified questions. 13 of them expect the TODO tools,
   so they double as tests for the tool builders. It's a dev set (we tuned on it), so the held-out set is what we report.
 - **Code TODOs:** `eval/run_eval.py` → `TODO(eval)` (LLM-judge faithfulness score, links to traces).
 
@@ -70,11 +70,11 @@ critic, with prompts, tokens and time.
 - **TODO:** auth + API key if Phoenix is shared (`backend/app/tracing.py` → `TODO(tracing)`).
 
 ## 5. Chat / eval dashboard ⬜
-- **TODO:** bring the Streamlit dashboard (chat + eval results) to `frontend/`. A working version is on
-  `jaswanth/server`. Compose slot: `TODO(frontend)`.
+- **TODO:** a Streamlit dashboard in `frontend/`: chat with the agent (show route, citations, trace) and an eval
+  results page (accuracy by category, failures). Compose slot: `TODO(frontend)`.
 
 ## 6. Before submission (25–27 Nov)
 - [ ] RAG service live, `RAG_SERVICE_URL` set
 - [ ] 4 tools in, tests green
 - [ ] held-out set frozen and run once; numbers into the report
-- [ ] report: what failed, what worked, trade-offs (source: experiment log on `jaswanth/server`)
+- [ ] report: what failed, what worked, trade-offs
