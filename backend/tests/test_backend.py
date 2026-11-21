@@ -234,3 +234,14 @@ async def test_live_agent_leave_question():
     g = build_agent(build_chat_model(s), build_chat_model(s, max_tokens=400), build_tools(EmptyRetriever(), s.data_path()))
     out, _ = await run(g, "Full-time, 4 years of service: annual leave hours per pay period?", tid="live")
     assert "6" in out["answer"] and any(t.get("tool") == "leave_accrual_calc" for t in out["trace"])
+
+
+def test_strategy_output_parsing():
+    from app.prompts import parse_strategy_output
+    assert parse_strategy_output("few_shot_json", '{"answer": "7 days [5 U.S.C. 6327(b)(1)]", "citations": []}') == "7 days [5 U.S.C. 6327(b)(1)]"
+    assert parse_strategy_output("cot", "Reasoning: excerpt says 7.\nFinal answer: 7 days.") == "7 days."
+    assert parse_strategy_output("few_shot_json", "not json at all") == "not json at all"
+
+
+def test_chat_rejects_unknown_strategy(client):
+    assert client.post("/chat", json={"question": "q", "strategy": "magic"}).status_code == 422

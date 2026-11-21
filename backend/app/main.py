@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from .agent import build_agent, summarize_turn
 from .config import get_settings
 from .llm import build_chat_model
-from .prompts import build_messages
+from .prompts import DECOMPOSE_PROMPT, STRATEGIES, build_messages, parse_strategy_output, system_for
 from .retrieval import Chunk, build_retriever
 from .tools import build_tools
 
@@ -39,6 +39,7 @@ class ChatRequest(BaseModel):
     k: int | None = Field(default=None, ge=1, le=20)
     filters: dict[str, Any] = Field(default_factory=dict)
     max_tokens: int | None = Field(default=None, ge=16, le=1024)
+    strategy: str = Field(default="grounded", description="grounded | few_shot_json | cot | decompose")
 
 
 class Usage(BaseModel):
@@ -49,6 +50,8 @@ class Usage(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    strategy: str
+    sub_queries: list[str] = Field(default_factory=list)
     citations: list[str]
     chunks: list[Chunk]
     grounded: bool
@@ -146,27 +149,58 @@ async def health(request: Request) -> dict[str, Any]:
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+    """Single-prompt RAG baseline with selectable prompting strategy (Track B part II)."""
     st = request.app.state
     s = st.settings
+    if req.strategy not in STRATEGIES:
+        raise HTTPException(422, f"strategy must be one of {STRATEGIES}")
     t0 = time.perf_counter()
-    chunks = await st.retriever.retrieve(req.question, k=req.k or s.retrieval_top_k, filters=req.filters)
-    t_retrieve = (time.perf_counter() - t0) * 1000
-
-    max_tokens = req.max_tokens or s.llm_default_max_tokens
-    messages, used = build_messages(req.question, chunks, [t.model_dump() for t in req.history],
-                                    context_tokens=s.llm_context_tokens, max_answer_tokens=max_tokens)
-    t1 = time.perf_counter()
+    k = req.k or s.retrieval_top_k
+    pt = ct = calls = 0
+    sub_queries: list[str] = []
     try:
+        if req.strategy == "decompose":
+            async with st.gate:
+                d = await st.llm.bind(max_tokens=200, response_format={"type": "json_object"}).ainvoke(
+                    [{"role": "system", "content": DECOMPOSE_PROMPT}, {"role": "user", "content": req.question}])
+            um = d.usage_metadata or {}
+            pt, ct, calls = um.get("input_tokens", 0), um.get("output_tokens", 0), 1
+            try:
+                sub_queries = [q for q in json.loads(d.content).get("queries", []) if isinstance(q, str)][:3]
+            except (ValueError, AttributeError):
+                sub_queries = []
+            sub_queries = sub_queries or [req.question]
+            seen, chunks = set(), []
+            per = max(2, k // len(sub_queries) + 1)
+            for q in sub_queries:
+                for c in await st.retriever.retrieve(q, k=per, filters=req.filters):
+                    if c.chunk_id not in seen:
+                        seen.add(c.chunk_id)
+                        chunks.append(c)
+        else:
+            chunks = await st.retriever.retrieve(req.question, k=k, filters=req.filters)
+        t_retrieve = (time.perf_counter() - t0) * 1000
+
+        max_tokens = req.max_tokens or (768 if req.strategy == "cot" else s.llm_default_max_tokens)
+        messages, used = build_messages(req.question, chunks, [t.model_dump() for t in req.history],
+                                        context_tokens=s.llm_context_tokens, max_answer_tokens=max_tokens,
+                                        system_prompt=system_for(req.strategy))
+        t1 = time.perf_counter()
+        model = st.llm.bind(max_tokens=max_tokens)
+        if req.strategy == "few_shot_json":
+            model = st.llm.bind(max_tokens=max_tokens, response_format={"type": "json_object"})
         async with st.gate:
-            msg = await st.llm.bind(max_tokens=max_tokens).ainvoke(messages)
+            msg = await model.ainvoke(messages)
     except APIError as exc:
         raise HTTPException(status_code=502, detail=f"LLM endpoint error: {exc}") from exc
     um = msg.usage_metadata or {}
-    answer = str(msg.content or "")
+    answer = parse_strategy_output(req.strategy, str(msg.content or ""))
     return ChatResponse(
-        answer=answer, citations=extract_citations(answer, [c.citation for c in used]), chunks=used,
+        answer=answer, strategy=req.strategy, sub_queries=sub_queries,
+        citations=extract_citations(answer, [c.citation for c in used]), chunks=used,
         grounded=bool(used), retriever=st.retriever.name,
-        usage=Usage(prompt_tokens=um.get("input_tokens", 0), completion_tokens=um.get("output_tokens", 0), llm_calls=1),
+        usage=Usage(prompt_tokens=pt + um.get("input_tokens", 0), completion_tokens=ct + um.get("output_tokens", 0),
+                    llm_calls=calls + 1),
         latency_ms={"retrieve": round(t_retrieve, 1), "llm": round((time.perf_counter() - t1) * 1000, 1),
                     "total": round((time.perf_counter() - t0) * 1000, 1)},
     )

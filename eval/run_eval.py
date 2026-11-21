@@ -135,15 +135,20 @@ def main() -> int:
     ap.add_argument("--limit", type=int)
     ap.add_argument("--qids", nargs="*", help="only these question ids")
     ap.add_argument("--tag", default="")
+    ap.add_argument("--strategy", default="grounded", help="chat mode: grounded | few_shot_json | cot | decompose")
     args = ap.parse_args()
     items = [json.loads(l) for l in (ROOT / args.gold).open()]
     items = [i for i in items if not args.qids or i["qid"] in args.qids][: args.limit]
-    out = ROOT / "eval" / "results" / f"e2e_{args.mode}{('_' + args.tag) if args.tag else ''}_{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
+    label = args.mode + (f"-{args.strategy}" if args.mode == "chat" else "")
+    out = ROOT / "eval" / "results" / f"e2e_{label}{('_' + args.tag) if args.tag else ''}_{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     with httpx.Client(base_url=args.api, timeout=600) as client, out.open("w") as fh:
         for i, item in enumerate(items, 1):
-            r = client.post(f"/{args.mode}", json={"question": item["question"]})
+            body = {"question": item["question"]}
+            if args.mode == "chat":
+                body["strategy"] = args.strategy
+            r = client.post(f"/{args.mode}", json=body)
             resp = r.json() if r.status_code == 200 else {"answer": f"HTTP {r.status_code}: {r.text[:200]}", "status": "http_error"}
             row = evaluate(item, args.mode, resp)
             rows.append(row)

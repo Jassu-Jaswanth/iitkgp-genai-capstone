@@ -135,3 +135,30 @@ Token counts use the bge tokenizer itself (the course's "count tokens, not words
   disclosed) but not a proper privacy refusal. The 8B model falls back to the stock phrase when no tool applies.
   **Proposed fix:** a routing/guard node before the planner (course: query routing) that classifies
   in-scope / individual-records / out-of-scope with structured output.
+
+## E11. Router / guard node fixes privacy and scope (21 Nov)
+- **Design (course: query routing):** a LangGraph `router` node before the planner classifies the latest request
+  (with the previous exchange as context) into `hr_policy | individual_records | out_of_scope | chitchat`, using
+  `with_structured_output(method="function_calling")` with a short `reason` field first. Non-HR routes get a fixed
+  reply with no tools. A router error falls back to `hr_policy`, so the user is never blocked.
+- **Offline test:** 10/10 correctly routed, including tricky in-scope cases ("salary for GS-12 step 5" → hr_policy;
+  "can my manager see my leave balance" → hr_policy; "supervisor John's GS grade" → individual_records).
+- **Live:** g028 (coworker's salary) → proper privacy refusal, 0 tools, 0.7 s (was "not covered" 3/3).
+  Out-of-scope 2/2, escalation and pay unaffected. Cost: +1 short LLM call per turn (~0.3–0.7 s).
+- **Also found:** (a) revisions after critic feedback leaked meta-text ("…based on the corrected citation…") →
+  the feedback now demands "ONLY the corrected final answer". (b) Our own tool bug: the part-time branch
+  returned no `sick_citation`, so the model invented "5 U.S.C. 6303(b)" → fixed to 6307(a).
+
+## E12. Operational issues (21 Nov)
+- **Hung retrieval grid:** `OpenAIEmbeddings` has no request timeout by default. One stalled request to the shared
+  embedding server blocked the run for minutes at 0% CPU while the endpoint answered direct probes in 0.27 s.
+  Fix: `request_timeout=60` + `max_retries=5`.
+- First-time Hugging Face model download (cross-encoder) can stall in WSL. Pre-download models in the container build.
+- Shared key contention again: 429s during sequential generation (see E9).
+
+## E13. Containerisation (21 Nov)
+- `backend/Dockerfile`, `frontend/Dockerfile` (python:3.12-slim + uv, locked deps), `compose.yaml`. `.env`, CA certs
+  and tool data are mounted read-only at runtime; nothing secret is baked into images (`.dockerignore` excludes
+  `.env`, `.context`, `data`). Backend healthcheck on `/health`; the dashboard waits for a healthy backend.
+- **Verified:** `docker compose up` → backend healthy; agent in a container answered "GS-12 step 5 DC overtime"
+  correctly ($55.89, cited); dashboard HTTP 200.
