@@ -1,0 +1,39 @@
+\section{Data and evaluation design}
+\label{sec:data}
+\textbf{Corpus (FedHR-Policy).} Public-domain sources only: 5 U.S.C.\ Chapter 63 (leave), seven eCFR parts of 5 CFR
+(leave, pay administration, premium pay, hours of duty) and 96 OPM fact sheets. PDF handbooks were left out on
+purpose. The corpus is organised as \emph{document $\to$ section $\to$ clause}: 104 documents,
+\textbf{1,484 sections} and \textbf{7,574 clauses} (3,847 regulation, 3,099 guidance, 628 statute). We count
+sections as the ``documents'' for the 500--2,000 cap. Legal paragraph markers drive stable clause IDs and citations
+(\texttt{usc5-6303-a-2} $\to$ \emph{5 U.S.C.\ 6303(a)(2)}). Each sub-item keeps its parent's lead-in so it reads on
+its own (2,920 clauses). Clause length: median 32 words, p90 100, max 1,639. Two tables back the tools: 2026 GS
+pay (59 localities $\times$ 15 grades $\times$ 10 steps) and federal holidays 2021--2030 (112 rows). The dataset
+card (\texttt{docs/DATASET.md}) documents fields, sources and limitations.
+
+\textbf{Evaluation sets.} Table~\ref{tab:sets} summarises them. The 90 hand-written queries meet the brief's
+60--100 requirement. Every gold fact was checked against the corpus clause or OPM table. Each item lists gold
+citations, gold clause IDs, required facts, expected tools and expected behaviour. A validator
+(\texttt{eval/validate\_gold.py}) rejects malformed items and unfilled template slots.
+
+\begin{table}[h]
+\centering\small
+\caption{Evaluation sets (\texttt{data/queries/}).}
+\label{tab:sets}
+\begin{tabularx}{\linewidth}{@{}lrlY@{}}
+\toprule
+Set & $n$ & Written by & Composition / use \\
+\midrule
+\texttt{gold\_v1} (dev) & 50 & Jaswanth & 31 policy, 5 leave calc, 3 pay, 2 holiday, 2 multi-step, 1 escalate, 2 refuse,
+3 out-of-scope, 1 injection. Used for tuning. \\
+\texttt{heldout\_v1} & 40 & Vijay & 18 policy, 4 leave calc, 3 pay, 2 holiday, 4 multi-step, 2 multi-turn, 2 escalate,
+2 refuse, 2 out-of-scope, 1 injection. Written by someone who did not tune the agent, frozen, then run once. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\textbf{The Week-1 gate.} \todo[Jaswanth Suvvari]{baseline numbers recorded before retrieval and agent tuning
+(tools-only agent on the first gold items).}
+The dev set was used to diagnose and fix failures (\S\ref{sec:agent}), so its score is optimistic. The held-out
+protocol (\texttt{eval/HELDOUT.md}) is therefore strict: the set is written by a non-tuner, nothing is run while
+writing it, it is frozen with \texttt{validate\_gold.py --strict}, and it is run once. The held-out number is the one
+we report.
