@@ -22,9 +22,22 @@ class Settings(BaseSettings):
     llm_context_tokens: int = 8192
     llm_default_max_tokens: int = 512
 
-    # Retrieval (built by the RAG teammate). Empty URL -> placeholder retriever.
+    # Retrieval component (one retrieve() contract, three implementations):
+    #   retrieval_mode = "" (auto: http if rag_service_url else placeholder) | placeholder | http | inprocess
+    #   inprocess imports rag/retriever.py (Rajesh's hybrid BM25 + bge-small + rerank) into this process;
+    #   needs `uv sync --extra rag`. rag_strategy / rag_search_mode mirror the RAG service's RAG_STRATEGY / RAG_MODE.
+    retrieval_mode: str = ""
     rag_service_url: str = ""
+    rag_strategy: str = "clause-pack-200"
+    rag_search_mode: str = "hybrid_rerank"
     retrieval_top_k: int = 5
+
+    # Storage: Postgres for chat history, LLM traces and agent memory. Empty -> kept in-process (lost on restart).
+    database_url: str = ""
+
+    # Caching (app/cache.py): on by default, nothing to set up.
+    search_cache_size: int = 512  # identical searches served from memory (0 = off)
+    answer_cache_ttl_s: int = 86400  # repeated first questions answered from Postgres for a day (0 = off)
 
     # Agent
     agent_max_steps: int = 10  # Track B guardrail: agent capped at 10 steps per query

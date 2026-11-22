@@ -133,11 +133,11 @@ def evaluate(item: dict, mode: str, resp: dict) -> dict:
             "completion_tokens": resp.get("usage", {}).get("completion_tokens", 0),
             "llm_calls": resp.get("usage", {}).get("llm_calls", 0),
             "latency_ms": resp.get("latency_ms") if isinstance(resp.get("latency_ms"), (int, float)) else resp.get("latency_ms", {}).get("total"),
-            "status": resp.get("status", "completed")}
+            "status": resp.get("status", "completed"),
+            "turn_id": resp.get("turn_id")}  # agent mode: the UI opens this answer's trace
 
 
 # TODO(eval): an LLM-as-judge faithfulness score (answer supported by retrieved text?) next to the string match.
-# TODO(eval): per-failure drill-down links to the Phoenix trace of that question.
 
 
 def summarize(rows: list[dict], mode: str) -> dict:
@@ -197,8 +197,10 @@ def main() -> int:
                 body = {"question": t}
                 if args.mode == "chat":
                     body |= {"strategy": args.strategy, "history": history}
-                elif session_id:
-                    body["session_id"] = session_id
+                else:
+                    body["use_cache"] = False  # measure the agent, not the answer cache
+                    if session_id:
+                        body["session_id"] = session_id
                 r = client.post(f"/{args.mode}", json=body)
                 resp = r.json() if r.status_code == 200 else {"answer": f"HTTP {r.status_code}: {r.text[:200]}", "status": "http_error"}
                 session_id = resp.get("session_id")

@@ -5,3 +5,5 @@ data
 .context
 .env
 eval/results
+**/node_modules
+**/dist

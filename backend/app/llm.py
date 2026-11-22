@@ -37,4 +37,5 @@ def build_chat_model(settings: Settings, *, max_tokens: int | None = None, tempe
         http_client=httpx.Client(verify=ctx),
         http_async_client=httpx.AsyncClient(verify=ctx),
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},  # Qwen3: no <think> block
+        disable_streaming=True,  # whole replies (with token usage) even when the graph is run via astream_events
     )

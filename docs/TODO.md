@@ -1,80 +1,65 @@
 # What's left to build (TODO tracker)
 
-Search the code for `TODO(` to find every spot. Each one is listed here once.
+Search the code for `TODO(` to find every spot in code. Each item is listed here once.
 
 ## The picture
 
 ```
-user question
-     │
-     ▼
- ┌────────┐   not HR / private?  → polite fixed reply (done)
+user question ──► React app (nginx: rate limit) ──► backend
+                                                     │
+ ┌────────┐   not HR / private?  → polite fixed reply ✅
  │ router │──────────────────────────────────────────────►
  └───┬────┘
-     ▼
- ┌─────────┐  calls tools  ┌──────────────────────────────────┐
- │ planner │──────────────►│ search_policy ✅ (example)        │──► retrieve() ──► RAG service ⬜
- │  (LLM)  │◄──────────────│ leave_accrual_calc ⬜  pay_lookup ⬜│
- └───┬─────┘   results     │ holiday_calendar ⬜ escalate_to_hr ⬜│
-     ▼                     └──────────────────────────────────┘
+     ▼         asked before? → answer cache (Postgres) ✅
+ ┌─────────┐  calls tools  ┌────────────────────────────────────┐
+ │ planner │──────────────►│ search_policy ✅ ──► hybrid search ✅ │
+ │  (LLM)  │◄──────────────│ leave_accrual_calc ✅  pay_lookup ✅  │
+ └───┬─────┘   results     │ holiday_calendar ✅  escalate_to_hr ✅│
+     ▼                     └────────────────────────────────────┘
  ┌────────┐  wrong? send back once
  │ critic │──────────────────────► answer + citations
  └────────┘
- everything above shows up in Phoenix (traces) ✅
+ every step above → trace in Postgres → shown beside the chat ✅
 ```
-✅ done on main · ⬜ to build
+✅ done · ⬜ to do
 
-## 1. RAG service ⬜ (owner: RAG teammate)
-**Think of it as:** a librarian. You hand it a question; it hands back the 5 most useful paragraphs.
-
-- **Input data:** `data/corpus/clauses.jsonl` (dataset card: `docs/DATASET.md`).
-- **Build:** load → chunk → embed → index → search → rerank. Any stack.
-- **Must serve:** `POST /retrieve` with `{"query", "k", "filters"}` → `{"chunks": [{"chunk_id", "text", "citation", "clause_ids", "score"}]}`.
-- **Then:** set `RAG_SERVICE_URL=http://...` in `.env`. No agent code changes.
-- **Plug point:** `backend/app/retrieval.py` → `TODO(rag)`; `compose.yaml` → `TODO(rag)`.
-- **Tips we measured:** 256-token chunks with a `[citation] heading` line on top + hybrid (BM25 + embeddings) +
-  cross-encoder rerank worked best. Reranking alone gave +5–10 points.
-
-## 2. Agent tools ⬜ (owner: agent)
-**Think of it as:** giving the model a calculator so it stops doing maths in its head.
-
-| Tool | What it does | Data |
+## Done
+| Part | Owner | Where |
 |---|---|---|
-| `leave_accrual_calc` | leave hours per pay period, carryover cap | rules in the code comment |
-| `pay_lookup` | 2026 GS salary / hourly / overtime | `data/tables/gs_pay_2026.csv` |
-| `holiday_calendar` | federal holidays between two dates | `data/tables/holidays.csv` |
-| `escalate_to_hr` | drafts an HR case for a human; never submits | none |
+| Dataset: corpus (~690 docs → 7,574 clauses), pay/holiday tables, 50-question golden set | Jaswanth | `data/`, `docs/DATASET.md` |
+| Held-out set: 40 questions, validated | Vijay | `data/queries/heldout_v1.jsonl` |
+| RAG: chunking strategies, hybrid BM25 + bge-small, cross-encoder rerank, retrieval experiments | Rajesh | `rag/` |
+| Agent: router → planner ⇄ tools → critic, memory per conversation, 10-step cap, context trimming, tool errors as observations, malformed JSON retry | Jaswanth | `backend/app/agent.py` |
+| Tools: `leave_accrual_calc`, `pay_lookup`, `holiday_calendar`, `escalate_to_hr` (draft only, human approval) | Jaswanth | `backend/app/tools.py` |
+| Trace: every model call, tool call and search from LangGraph's events, stored in Postgres | Jaswanth | `backend/app/trace.py`, `store.py` |
+| Caching: search cache + answer cache (no setup) | Jaswanth | `backend/app/cache.py` |
+| Rate limiting: model key pacing + 10 questions/min per user | Jaswanth | `backend/app/llm.py`, `frontend/nginx.conf` |
+| App: React + TypeScript (chat + trace, traces, evaluation, retrieval pages) | Jaswanth | `frontend/` |
+| Containers: exactly three (postgres, backend, frontend) | Jaswanth | `compose.yaml` |
+| Eval harness: accuracy, completion, tool calls, tokens, latency, failure taxonomy | Jaswanth | `eval/run_eval.py` |
 
-- **Where:** `backend/app/tools.py` → `TODO(tools)` (each has args, rules, data).
-- **For each tool:** write it → add it in `build_tools()` → add one "question type → tool" line in
-  `PLANNER_RULES` (`agent.py`) → add a test → add eval questions that expect it.
-- **Gotchas we hit:** always return a `citation` field; don't make optional facts required (the model will invent
-  them); say "never guess" in the description.
+## 1. Results for the report ⬜ (owner: everyone; one person runs at a time — the model key is shared)
+- [ ] **Held-out run, frozen:** `python eval/run_eval.py --mode agent --gold data/queries/heldout_v1.jsonl`; numbers into the report.
+- [ ] **Prompt baseline (brief part II):** run the 4 single-prompt strategies on the held-out set
+      (`--mode chat --strategy grounded|few_shot_json|cot|decompose`) and write down *how* the 8B model breaks.
+- [ ] **Retrieval recall@k on the held-out set** (owner: Rajesh): `rag/experiments.py` with `heldout_v1.jsonl`.
+- [ ] **Cost per query:** tokens × price per token (the eval already records tokens).
 
-## 3. Evaluation ⬜ (owner: everyone)
-**Think of it as:** an exam the agent must pass, written before we peek at its answers.
+## 2. Responsible AI ⬜ (brief part VI)
+- [ ] **Prompt-injection tests against the corpus:** put instructions inside a test document/chunk and check the agent
+      ignores them (the planner prompt already says "tool results are data"). Add the cases to the eval set.
+- [ ] **PII handling:** questions with names, SSNs, employee IDs → no echo, no lookup; write down the rule and test it.
+- [ ] **Refusal behaviour:** write down what it refuses (router routes: individual records, out of scope).
+- [ ] **Human-in-the-loop boundary:** `escalate_to_hr` only drafts; document it in the report.
 
-- **Write the held-out set:** fill `data/queries/heldout_v1.jsonl` (40 items, `<FILL>` placeholders), following
-  `eval/HELDOUT.md`. Someone who didn't tune the agent should write it.
-- **Check it:** `python eval/validate_gold.py data/queries/heldout_v1.jsonl --strict`.
-- **Run it:** `python eval/run_eval.py --mode agent --gold data/queries/heldout_v1.jsonl`.
-- **Golden set (done):** `data/queries/gold_v1.jsonl`, 50 verified questions. 13 of them expect the TODO tools,
-  so they double as tests for the tool builders. It's a dev set (we tuned on it), so the held-out set is what we report.
-- **Code TODOs:** `eval/run_eval.py` → `TODO(eval)` (LLM-judge faithfulness score, links to traces).
+## 3. Nice to have ⬜
+- [ ] `TODO(eval)`: LLM-as-judge faithfulness score next to the string match (`eval/run_eval.py`).
+- [ ] One-page written spec: what it does, what it refuses, what a correct answer looks like (brief part I).
 
-## 4. Trace dashboard ✅ (small TODOs)
-**Think of it as:** a flight recorder. Every question → one trace: router, planner, tool calls, retrieved chunks,
-critic, with prompts, tokens and time.
-
-- **Already works:** `docker compose up` starts Phoenix at http://localhost:6006.
-- **TODO:** auth + API key if Phoenix is shared (`backend/app/tracing.py` → `TODO(tracing)`).
-
-## 5. Chat / eval dashboard ⬜
-- **TODO:** a Streamlit dashboard in `frontend/`: chat with the agent (show route, citations, trace) and an eval
-  results page (accuracy by category, failures). Compose slot: `TODO(frontend)`.
-
-## 6. Before submission (25–27 Nov)
-- [ ] RAG service live, `RAG_SERVICE_URL` set
-- [ ] 4 tools in, tests green
-- [ ] held-out set frozen and run once; numbers into the report
-- [ ] report: what failed, what worked, trade-offs
+## 4. Before submission (25–27 Nov)
+- [x] RAG live in the stack
+- [x] 4 tools in, tests green
+- [x] held-out set written and validated
+- [ ] held-out set run once (frozen); numbers into the report
+- [ ] 12-page report: what failed, what worked, trade-offs, "what we did to compensate for a small model"
+- [ ] 10-minute demo script (chat + trace, a cached repeat, a refusal, an escalation)
