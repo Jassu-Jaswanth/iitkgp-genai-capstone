@@ -1,61 +1,52 @@
-# docker compose up --build  ->  agent API (:8100) + RAG service (:8200) + trace dashboard Phoenix (:6006)
+# docker compose up --build   ->  three containers, nothing else:
+#
+#   postgres   chat history, the trace of every answer, agent memory, answer cache   (127.0.0.1:5433)
+#   backend    LangGraph agent + tools; searches the policy corpus in-process (rag/retriever.py)   (:8100)
+#   frontend   React app (nginx): chat with a live trace panel, traces, evaluation; rate-limits /api   (:3000)
+#
+# Open http://localhost:3000. First start embeds the corpus into data/index (~2 min); later starts reuse it.
 services:
-  phoenix:                                   # trace dashboard: every LLM call, tool call and retrieval
-    image: arizephoenix/phoenix:latest
+  postgres:
+    image: postgres:17-alpine
     environment:
-      PHOENIX_WORKING_DIR: /mnt/data
-      PHOENIX_ENABLE_AUTH: "false"           # local only; port bound to 127.0.0.1 (TODO(tracing): auth if shared)
-    volumes: [phoenix-data:/mnt/data]
-    ports: ["127.0.0.1:6006:6006"]
-    healthcheck:                             # image has no shell/curl; python is there
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:6006/healthz',timeout=5)"]
-      interval: 5s
-      timeout: 5s
-      retries: 24                            # first start runs DB migrations
+      POSTGRES_DB: hrnav
+      POSTGRES_USER: hrnav
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hrnav-local}   # local only; the port is bound to 127.0.0.1
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports: ["127.0.0.1:5433:5432"]                             # for psql / running the backend outside docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrnav -d hrnav"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
-  backend:                                   # LangGraph agent + /chat baseline
-    build: {context: ., dockerfile: backend/Dockerfile}
+  backend:
+    build: {context: ., dockerfile: backend/Dockerfile, args: {RAG_EXTRA: rag}}
     env_file: .env
     environment:
-      RAG_SERVICE_URL: http://rag:8200       # the RAG service below (overrides .env inside compose)
-      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
+      DATABASE_URL: postgresql://hrnav:${POSTGRES_PASSWORD:-hrnav-local}@postgres:5432/hrnav
+      RETRIEVAL_MODE: inprocess                                # search runs inside the backend; no RAG container
     volumes:
       - ./.env:/app/.env:ro
       - ./.context/certs:/app/.context/certs:ro
-      - ./data:/app/data:ro
-    ports: ["8100:8100"]
+      - ./data:/app/data                                       # writable: builds data/index on first start if missing
+      - ./eval/results:/app/eval/results:ro                    # eval reports shown on the Evaluation page
+    ports: ["8100:8100"]                                       # the eval runner talks to the backend directly
     depends_on:
-      phoenix: {condition: service_healthy}  # otherwise early traces are dropped while Phoenix migrates
-      rag: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health',timeout=5)"]
-      interval: 30s
+      interval: 15s
+      start_period: 300s                                       # first start may embed the corpus (~2 min)
       timeout: 10s
       retries: 3
 
-  rag:                                       # RAG service: hybrid BM25 + bge-small (upGrad endpoint) + rerank
-    build: {context: ., dockerfile: rag/Dockerfile}
-    env_file: .env                           # EMBEDDING_* for the upGrad embedding endpoint
-    environment:
-      RAG_STRATEGY: ${RAG_STRATEGY:-clause-pack-200}
-      RAG_MODE: ${RAG_MODE:-hybrid_rerank}
-      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006/v1/traces
-    volumes:
-      - ./.env:/app/.env:ro
-      - ./.context/certs:/app/.context/certs:ro
-      - ./data/corpus:/app/data/corpus:ro
-      - ./data/index:/app/data/index           # built on first start if missing (git-ignored)
-    ports: ["8200:8200"]
+  frontend:
+    build: {context: ., dockerfile: frontend/Dockerfile}
+    ports: ["3000:80"]
     depends_on:
-      phoenix: {condition: service_healthy}
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8200/health',timeout=5)"]
-      interval: 15s
-      timeout: 10s
-      start_period: 240s                     # first start embeds ~3k chunks via the endpoint
-      retries: 5
-
-  # TODO(frontend): add the chat/eval dashboard (frontend/) once it lands on main.
+      backend: {condition: service_healthy}
 
 volumes:
-  phoenix-data:
+  pgdata:

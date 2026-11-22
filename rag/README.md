@@ -25,7 +25,7 @@ Input is the team corpus **`data/corpus/clauses.jsonl`** (FedHR-Policy, 7,574 cl
 | 1. Chunk clauses (per strategy) | `chunking.py` | chunks with `clause_ids`, `[citation] heading` header |
 | 2. Embed + save index | `build_index.py` | `data/index/<strategy>/{chunks.jsonl,dense.npy,meta.json}` (git-ignored) |
 | 3. Search | `retriever.py` | BM25 top 30 + dense top 30 → RRF (k=60) → rerank pool 20 → top k |
-| 4. Serve | `service.py` | `POST /retrieve`, `GET /health`; LRU cache; Phoenix spans join the backend trace |
+| 4. Serve | `service.py` | `POST /retrieve`, `GET /health`; LRU cache (standalone use) |
 | 5. Measure | `experiments.py` | `eval/results/retrieval_<ts>.csv` (+ per-query JSONL) |
 
 Metrics: `sec@k` (gold section in top k), `cl@k` (gold clauses found), `fact@k` (top-k text contains every
@@ -40,8 +40,9 @@ cd rag && uv sync
 .venv/Scripts/python experiments.py
 .venv/Scripts/python -m uvicorn service:app --port 8200                 # then RAG_SERVICE_URL=http://localhost:8200
 ```
-Docker: `docker compose up --build` starts `rag` (:8200) and points the backend at it. If the index is missing, the
-service builds it on first start through the embedding endpoint (~2 min).
+Docker: `docker compose up --build` runs this search inside the backend container (`RETRIEVAL_MODE=inprocess`), so
+there is no separate RAG container. If the index is missing, the backend builds it on first start through the
+embedding endpoint (~2 min). `service.py` still serves the same search over HTTP for standalone use.
 
 ## Gotchas (Windows)
 - An expired Hugging Face token stored locally turns public model downloads into 401s; the code sets

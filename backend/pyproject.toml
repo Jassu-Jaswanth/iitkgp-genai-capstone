@@ -3,15 +3,27 @@ name = "hr-navigator-backend"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "arize-phoenix-otel>=0.17.3",
     "fastapi>=0.165.0",
     "httpx>=0.28.1",
     "langchain-core>=1.8.4",
     "langchain-openai>=1.8.5",
     "langgraph>=1.2.24",
-    "openinference-instrumentation-langchain>=0.1.89",
+    "langgraph-checkpoint-postgres>=3.2.1",
+    "psycopg-pool>=3.3.3",
+    "psycopg[binary]>=3.3.9",
     "pydantic-settings>=2.16.3",
     "uvicorn[standard]>=0.54.0",
+]
+
+[project.optional-dependencies]
+# RETRIEVAL_MODE=inprocess: run rag/retriever.py inside the backend (same libraries as rag/pyproject.toml; no torch)
+rag = [
+    "numpy>=1.26",
+    "rank-bm25>=0.2.2",
+    "fastembed>=0.4",
+    "tokenizers>=0.19",
+    "python-dotenv>=1.0",
+    "huggingface-hub>=1.33.0",
 ]
 
 [dependency-groups]

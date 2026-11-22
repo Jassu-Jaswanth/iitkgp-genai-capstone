@@ -7,6 +7,7 @@ Run from backend/:  uv run uvicorn app.main:app --reload --port 8100
 """
 
 import asyncio
+import logging
 import json
 import re
 import time
@@ -15,18 +16,20 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 from openai import APIError
 from pydantic import BaseModel, Field
 
-from .agent import build_agent, summarize_turn
+from .agent import CRITIC_PROMPT, PLANNER_PROMPT, ROUTER_PROMPT, build_agent, summarize_turn
+from .cache import answer_key, cacheable, version_hash
 from .config import get_settings
 from .llm import build_chat_model
 from .prompts import DECOMPOSE_PROMPT, STRATEGIES, build_messages, parse_strategy_output, system_for
 from .retrieval import Chunk, build_retriever
 from .tools import build_tools
-from .tracing import setup_tracing
+from .store import open_store
+from .trace import TraceCollector
 
 
 class ChatTurn(BaseModel):
@@ -64,10 +67,12 @@ class ChatResponse(BaseModel):
 class AgentRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     session_id: str | None = Field(default=None, description="Reuse to continue a conversation")
+    use_cache: bool = Field(default=True, description="False forces a fresh answer (the eval runner sends False)")
 
 
 class AgentResponse(BaseModel):
     session_id: str
+    turn_id: str  # GET /turns/{turn_id}/trace returns the LLM trace of this answer
     route: str
     answer: str
     citations: list[str]
@@ -80,6 +85,7 @@ class AgentResponse(BaseModel):
     trace: list[dict[str, Any]]
     usage: Usage
     latency_ms: float
+    cached_from: str | None = None  # turn_id of the original answer when served from the answer cache
 
 
 _CITE = re.compile(r"\[([^\[\]]{3,120})\]")
@@ -119,24 +125,40 @@ def _known_citations_from_trace(trace: list[dict[str, Any]]) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def _usage(fallback: dict, steps: list[dict]) -> "Usage":
+    """Token usage of the whole turn, counted from the trace (every model call, router included)."""
+    llm = [x for x in steps if x["kind"] == "llm"]
+    if not llm:
+        return Usage(**fallback)
+    return Usage(prompt_tokens=sum(x["prompt_tokens"] or 0 for x in llm),
+                 completion_tokens=sum(x["completion_tokens"] or 0 for x in llm), llm_calls=len(llm))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     s = get_settings()
     st = app.state
     st.settings = s
-    st.tracing = setup_tracing()
     st.gate = asyncio.Semaphore(s.llm_max_concurrency)  # the key allows one active request
     st.llm = build_chat_model(s)
-    st.retriever = build_retriever(s.rag_service_url)
+    st.retriever = build_retriever(s.rag_service_url, s.retrieval_mode, s.rag_strategy, s.rag_search_mode,
+                                   cache_size=s.search_cache_size)
     st.tools = build_tools(st.retriever, s.data_path())
+    st.store = await open_store(s.database_url, s.answer_cache_ttl_s)  # Postgres if DATABASE_URL, else in-process
+    # Answer-cache version: any change to prompts, tools, retriever or model starts a fresh cache.
+    st.cache_version = version_hash(PLANNER_PROMPT, ROUTER_PROMPT, CRITIC_PROMPT, st.retriever.name, s.llm_model,
+                                    *[f"{t.name}:{t.description}" for t in st.tools])
     st.agent = build_agent(build_chat_model(s), build_chat_model(s, max_tokens=400), st.tools,
-                           context_tokens=s.llm_context_tokens, max_answer_tokens=s.llm_default_max_tokens)
+                           context_tokens=s.llm_context_tokens, max_answer_tokens=s.llm_default_max_tokens,
+                           checkpointer=await st.store.checkpointer())
     yield
+    await st.store.close()
     if hasattr(st.retriever, "aclose"):
         await st.retriever.aclose()
 
 
-app = FastAPI(title="HR Policy Navigator", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="HR Policy Navigator", version="0.3.0", lifespan=lifespan)
+log = logging.getLogger("hr_navigator")
 
 
 @app.get("/health")
@@ -147,8 +169,20 @@ async def health(request: Request) -> dict[str, Any]:
         llm = {"ok": st.settings.llm_model in models, "models": models}
     except Exception as exc:  # report, don't crash the health check
         llm = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    stats = getattr(st.retriever, "cache_stats", lambda: None)()
     return {"status": "ok" if llm["ok"] else "degraded", "llm": llm, "retriever": st.retriever.name,
-            "tools": [t.name for t in st.tools], "tracing": st.tracing}
+            "tools": [t.name for t in st.tools], "storage": "postgres" if st.settings.database_url else "memory",
+            "cache": {"search": stats, "answer_ttl_s": st.settings.answer_cache_ttl_s}}
+
+
+@app.delete("/cache")
+async def clear_cache(request: Request) -> dict:
+    """Empty both caches (e.g. after re-indexing the corpus)."""
+    st = request.app.state
+    cache = getattr(getattr(st.retriever, "lc", None), "cache", None)
+    if cache is not None:
+        cache._d.clear()
+    return {"answers_cleared": await st.store.answer_cache.clear()}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -215,14 +249,25 @@ async def agent(req: AgentRequest, request: Request) -> AgentResponse:
     st = request.app.state
     s = st.settings
     session_id = req.session_id or uuid.uuid4().hex
-    config = {"configurable": {"thread_id": session_id}, "recursion_limit": s.agent_max_steps * 2 + 4}
+    turn_id = uuid.uuid4().hex
+    config = {"configurable": {"thread_id": session_id},
+              "recursion_limit": s.agent_max_steps * 2 + 4}
     turn_input = {"messages": [HumanMessage(req.question)], "route": "hr_policy", "critic_rounds": 0,
                   "critique": [], "critic_usage": []}
     t0 = time.perf_counter()
+    # Answer cache: only the first question of a conversation (follow-ups depend on what came before).
+    use_cache = req.use_cache and s.answer_cache_ttl_s > 0
+    key = None
+    if use_cache and not (req.session_id and (await st.agent.aget_state(config)).values.get("messages")):
+        key = answer_key(st.cache_version, req.question)
+        if (hit := await st.store.answer_cache.get(key)) is not None:
+            return await _from_cache(st, hit, session_id, turn_id, req.question, config, t0)
     status = "completed"
+    collector = TraceCollector()
     async with st.gate:
         try:
-            await st.agent.ainvoke(turn_input, config)
+            async for ev in st.agent.astream_events(turn_input, config, version="v2"):
+                collector.add(ev)  # LangGraph's own events -> the LLM trace of this turn
         except GraphRecursionError:
             status = "step_limit"
         except APIError as exc:
@@ -248,11 +293,107 @@ async def agent(req: AgentRequest, request: Request) -> AgentResponse:
             except (ValueError, KeyError):
                 pass
         t.pop("full_content", None)
-    return AgentResponse(
-        session_id=session_id, route=summary["route"], answer=answer, citations=citations,
+    resp = AgentResponse(
+        session_id=session_id, turn_id=turn_id, route=summary["route"], answer=answer, citations=citations,
         retrieved_clause_ids=list(dict.fromkeys(retrieved_ids)),
         retrieved_citations=[c for c in dict.fromkeys(retrieved_cites) if c],
         status=status, critique=vals.get("critique", []), tool_calls=summary["tool_calls"],
-        tool_errors=summary["tool_errors"], trace=summary["trace"], usage=Usage(**summary["usage"]),
+        tool_errors=summary["tool_errors"], trace=summary["trace"], usage=_usage(summary["usage"], collector.steps),
         latency_ms=round((time.perf_counter() - t0) * 1000, 1),
     )
+    try:
+        await st.store.save_turn(session_id, req.question, resp.model_dump(), collector.steps)
+        if key and cacheable(resp.model_dump()):
+            await st.store.answer_cache.put(key, {"question": req.question, "response": resp.model_dump(),
+                                                  "steps": collector.steps})
+    except Exception:  # storage problems must not lose the answer
+        log.exception("could not store turn %s", turn_id)
+    return resp
+
+
+async def _from_cache(st, hit: dict, session_id: str, turn_id: str, question: str, config: dict,
+                      t0: float) -> AgentResponse:
+    """Serve a cached answer as a new turn: same answer and trace, new ids, zero model calls."""
+    orig = hit["response"]
+    resp = AgentResponse(**{**orig, "session_id": session_id, "turn_id": turn_id,
+                            "cached_from": orig.get("cached_from") or orig["turn_id"],
+                            "usage": Usage(prompt_tokens=0, completion_tokens=0, llm_calls=0),
+                            "latency_ms": round((time.perf_counter() - t0) * 1000, 1)})
+    # Put the exchange into the agent's memory so follow-up questions in this conversation have context.
+    await st.agent.aupdate_state(config, {"messages": [
+        HumanMessage(question), AIMessage(resp.answer, additional_kwargs={"route": resp.route})]}, as_node="critic")
+    try:
+        await st.store.save_turn(session_id, question, resp.model_dump(), hit.get("steps", []))
+    except Exception:
+        log.exception("could not store cached turn %s", turn_id)
+    return resp
+
+
+# ------------------------------------------------------------------ history and traces (for the dashboard)
+@app.get("/conversations")
+async def conversations(request: Request, limit: int = 50) -> list[dict]:
+    return await request.app.state.store.conversations(limit)
+
+
+@app.get("/conversations/{conversation_id}/messages")
+async def conversation_messages(conversation_id: str, request: Request) -> list[dict]:
+    return await request.app.state.store.messages(conversation_id)
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str, request: Request) -> dict:
+    st = request.app.state
+    if not await st.store.delete(conversation_id):
+        raise HTTPException(404, "no such conversation")
+    await st.agent.checkpointer.adelete_thread(conversation_id)  # forget the agent memory too
+    return {"deleted": conversation_id}
+
+
+@app.get("/turns")
+async def turns(request: Request, limit: int = 100) -> list[dict]:
+    return await request.app.state.store.turns(limit)
+
+
+@app.get("/turns/{turn_id}/trace")
+async def turn_trace(turn_id: str, request: Request) -> list[dict]:
+    return await request.app.state.store.trace(turn_id)
+
+
+# ------------------------------------------------------------------ eval reports (files in eval/results/)
+def _results_dir():
+    from .config import REPO_ROOT
+    return REPO_ROOT / "eval" / "results"
+
+
+@app.get("/eval/runs")
+async def eval_runs() -> list[dict]:
+    """Every end-to-end eval run (eval/run_eval.py), newest first: its summary numbers."""
+    out = []
+    for p in sorted(_results_dir().glob("e2e_*.summary.json"), reverse=True):
+        try:
+            out.append({"run": p.name.removesuffix(".summary.json"), **json.loads(p.read_text())})
+        except ValueError:
+            continue
+    return out
+
+
+@app.get("/eval/runs/{run}")
+async def eval_run(run: str) -> list[dict]:
+    """Per-question rows of one run."""
+    p = _results_dir() / f"{run}.jsonl"
+    if "/" in run or ".." in run or not p.exists():
+        raise HTTPException(404, "no such run")
+    return [json.loads(line) for line in p.open() if line.strip()]
+
+
+@app.get("/eval/retrieval")
+async def eval_retrieval() -> list[dict]:
+    """Retrieval experiments (rag/experiments.py): one CSV per run, newest first, rows as dicts."""
+    import csv
+    out = []
+    for p in sorted(_results_dir().glob("retrieval_*.csv"), reverse=True):
+        rows = []
+        for r in csv.DictReader(p.open()):
+            rows.append({k: (float(v) if v.replace(".", "", 1).replace("-", "", 1).isdigit() else v) for k, v in r.items()})
+        out.append({"run": p.stem, "rows": rows})
+    return out

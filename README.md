@@ -10,15 +10,16 @@ Qwen3-8B model, so all the cleverness is in the agent, the tools and the retriev
 ```
 question → router → planner (LLM) ⇄ tools → critic → answer + [citations]
                                    │
-                                   └─ search_policy → retrieve() → RAG service (TODO)
+                                   ├─ search_policy → hybrid search (BM25 + embeddings + rerank) over the corpus
+                                   └─ leave_accrual_calc · pay_lookup · holiday_calendar · escalate_to_hr
 ```
 - **router:** blocks private or off-topic questions early.
 - **planner:** decides which tool to use next.
-- **tools:** do the lookups and maths.
+- **tools:** do the lookups and maths (the 8B model is bad at arithmetic, so it never does it itself).
 - **critic:** checks the answer against what the tools returned, and sends it back once if wrong.
-- **Phoenix:** shows every step as a trace.
+- **trace:** every step (model calls, tool calls, searches) is saved in Postgres and shown next to the chat.
+- **cache:** a question asked before is answered instantly; repeated searches are reused. Nothing to set up.
 
-**Today on main:** the loop works end to end with one example tool. With no RAG service it answers "not covered".
 What's left: [docs/TODO.md](docs/TODO.md).
 
 ## Run it (5 minutes)
@@ -28,26 +29,25 @@ What's left: [docs/TODO.md](docs/TODO.md).
    mkdir -p .context/certs              # put llm-vm04-ca.crt and embedding-vm02-ca.crt here
    python scripts/check_endpoints.py    # should print "LLM OK" and "Embeddings OK"
    ```
-2. **Start everything** (Docker):
+2. **Start everything** (Docker). Three containers: `postgres`, `backend`, `frontend`.
    ```bash
    docker compose up --build
    ```
+   The first start builds the search index (~2 minutes); later starts reuse it.
+   - **The app:** http://localhost:3000 (chat with the trace beside it, all traces, eval results)
    - Agent API: http://localhost:8100/docs
-   - Trace dashboard: http://localhost:6006
-3. **Ask something:**
-   ```bash
-   curl -s localhost:8100/agent -H 'content-type: application/json' \
-        -d '{"question": "How much annual leave can I carry over?"}'
-   ```
-   Then open Phoenix to watch what the agent did.
+3. **Ask something** in the app, then click **Trace ▸** under the answer to see every step the agent took.
 
-**Without Docker:** `cd backend && uv sync && uv run uvicorn app.main:app --port 8100`.
-**Tests:** `cd backend && uv run pytest` (no network needed).
+**Without Docker:** backend `cd backend && uv sync --extra rag && uv run uvicorn app.main:app --port 8100`;
+UI `cd frontend && npm install && npm run dev` (http://localhost:5173).
+**Tests:** `cd backend && uv run pytest` (no network needed) · `cd frontend && npm run build` (type check + build).
 
 ## Where things are
 | Folder | What |
 |---|---|
-| `backend/` | the agent (LangGraph), tools, API, tracing |
+| `backend/` | the agent (LangGraph), tools, API, trace + cache (Postgres) |
+| `frontend/` | the React + TypeScript app: [frontend/README.md](frontend/README.md) |
+| `rag/` | the search: chunking, hybrid retrieval, reranking, experiments: [rag/README.md](rag/README.md) |
 | `eval/` | the grading script + validator: [eval/README.md](eval/README.md) |
 | `data/` | the dataset: corpus for RAG, tables for tools, golden queries: [docs/DATASET.md](docs/DATASET.md) |
 | `docs/` | **TODO tracker**, dataset guide, course brief and upGrad notes |
