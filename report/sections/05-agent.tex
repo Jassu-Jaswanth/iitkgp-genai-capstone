@@ -1,0 +1,101 @@
+\section{Agent}
+\label{sec:agent}
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=6mm and 7mm,
+  box/.style={draw,rounded corners=2pt,align=center,font=\footnotesize,minimum height=8mm,minimum width=2.1cm,fill=white},
+  llm/.style={box,fill=blue!7},
+  ext/.style={box,fill=gray!10},
+  arr/.style={-{Stealth[length=2mm]},thick},
+  lab/.style={font=\scriptsize}]
+\node[ext] (ui) {React UI\\nginx rate limit};
+\node[box,right=of ui] (api) {FastAPI \texttt{/agent}\\answer cache};
+\node[llm,right=of api] (router) {router};
+\node[llm,right=of router] (planner) {planner};
+\node[llm,right=of planner] (critic) {critic\\(LLM + rules)};
+\node[ext,below=of api] (pg) {Postgres: memory,\\traces, cache};
+\node[ext,below=of router] (fixed) {fixed reply\\privacy / scope};
+\node[box,below=of planner] (tools) {ToolNode\\5 tools};
+\node[box,below=of critic] (out) {answer +\\citations};
+\node[ext,below=of tools,minimum width=4.2cm] (rag) {search: BM25 + bge-small\\$\to$ RRF $\to$ cross-encoder};
+\draw[arr] (ui) -- (api);
+\draw[arr] (api) -- (router);
+\draw[arr] (router) -- node[lab,above]{HR} (planner);
+\draw[arr] (router) -- (fixed);
+\draw[arr] ([xshift=-3mm]planner.south) -- node[lab,left]{call} ([xshift=-3mm]tools.north);
+\draw[arr] ([xshift=3mm]tools.north) -- node[lab,right]{result} ([xshift=3mm]planner.south);
+\draw[arr] (planner) -- node[lab,above]{draft} (critic);
+\draw[arr] (critic.north) to[bend right=35] node[lab,above]{issues ($\le$1 revision)} (planner.north);
+\draw[arr] (critic) -- (out);
+\draw[arr] (tools) -- node[lab,right]{\texttt{search\_policy}} (rag);
+\draw[arr,dashed] (api) -- (pg);
+\end{tikzpicture}
+\caption{System overview. Blue nodes call the Qwen3-8B endpoint (one request in flight per key). The checkpointer persists the graph state per conversation
+in Postgres, and every LLM, tool and retriever step is stored as a trace row.}
+\label{fig:arch}
+\end{figure}
+
+\textbf{Graph.} The agent is a LangGraph \texttt{StateGraph} (Figure~\ref{fig:arch}). The \emph{router} classifies
+the latest request, with the previous exchange as context, into \texttt{hr\_policy | individual\_records |
+out\_of\_scope | chitchat}. It uses structured output with a short \texttt{reason} field before the label.
+Non-HR routes get a fixed reply with no tools, and a router error falls back to \texttt{hr\_policy}, so the user is
+never blocked. The \emph{planner} (executor) uses native tool calling and loops with the \texttt{ToolNode}. The
+\emph{critic} checks the draft against the tool evidence of the current turn and may send it back once.
+
+\begin{table}[h]
+\centering\small
+\caption{Tools. Every output carries a \texttt{citation} field. Arguments are Pydantic-validated.}
+\label{tab:tools}
+\begin{tabularx}{\linewidth}{@{}lYY@{}}
+\toprule
+Tool & Arguments & Returns / source \\
+\midrule
+\texttt{search\_policy} & \texttt{query} (+ the user's question, injected from state and hidden from the model) &
+top-5 chunks with citations and clause IDs; both queries searched, results interleaved \\
+\texttt{leave\_accrual\_calc} & years of service, full/part-time, SES, hours in pay status, overseas &
+annual/sick hours per pay period and per year, carryover cap (5 U.S.C.\ 6303, 6304, 6307) \\
+\texttt{pay\_lookup} & GS grade 1--15, step 1--10, locality & 2026 annual, hourly and overtime rate (OPM table) \\
+\texttt{holiday\_calendar} & start and end date & federal holidays in range (OPM holiday calendar) \\
+\texttt{escalate\_to\_hr} & summary of what needs deciding & a draft case, \texttt{pending\_human\_approval}; never submitted \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\textbf{Critic design.} The critic returns \emph{only} a list of at most four unsupported or contradicted claims,
+via function calling. We compute \texttt{grounded = (len(issues) == 0)} in code (finding 2 in \S\ref{sec:prompt}).
+Each evidence block is labelled \texttt{[tool\_name result]}; empty searches are dropped; and calculator outputs are
+authoritative. Without these rules the critic read two empty searches as ``no evidence'' and talked the planner out
+of a \emph{correct} calculator answer: a critic can make answers worse. Deterministic checks run before any critic
+call. (a) A draft that makes claims with zero tool evidence this turn is sent back (this fixes answering from
+memory). (b) ``Not covered'' is sent back if \texttt{search\_policy} did not run. (c) ``Not covered'' after a real
+search is accepted without an LLM call. The revision prompt asks for ``ONLY the corrected final answer'', which
+stopped the meta-text leaks.
+
+\textbf{State and memory.} The state holds the message list plus per-turn counters (route, critic rounds,
+critique, critic token usage). These counters reset every turn. A LangGraph checkpointer
+(\texttt{AsyncPostgresSaver}, keyed by conversation \texttt{thread\_id}) keeps the conversation across turns and
+restarts. Before each planner call, \texttt{trim\_messages} keeps the most recent history within
+$8192 - 512 - 1200$ tokens, leaving room for the system prompt, tool schemas and the answer.
+
+\textbf{Error handling.}
+\emph{Tool failures:} \texttt{ToolNode(handle\_tool\_errors=True)} turns exceptions and argument-validation errors
+into error observations the planner can react to. Errored results are excluded from the critic's evidence.
+\emph{Malformed JSON:} \texttt{invalid\_tool\_calls} from the model become error \texttt{ToolMessage}s (``malformed
+arguments, call again with valid JSON''), and the planner retries.
+\emph{Loops:} \texttt{recursion\_limit} $= 2\times10+4$ enforces the brief's 10-step cap. On
+\texttt{GraphRecursionError} the API returns status \texttt{step\_limit} with an explicit message, and the critic has
+at most one revision round.
+\emph{Token budgets:} answers are capped at 512 tokens (endpoint maximum 1,024), history is trimmed, critic
+evidence is truncated to 12k characters, and context is packed by token budget.
+\emph{Endpoint errors:} the SDK retries 429/5xx with exponential backoff (3 retries, 120\,s timeout); a 60\,rpm
+client-side rate limiter and a process-wide semaphore enforce ``one request in flight''; the embedding client has a
+60\,s timeout plus the local fallback.
+
+\textbf{Iterations driven by the dev set.} Two fixes came directly from dev-set failures. First, the planner
+``gave up'' without searching (6/50 questions). The fixes were \texttt{tool\_choice="required"} on the first planner
+step of every turn, the critic sending back unsearched ``not covered'' drafts, and tool descriptions such as
+``dollar amounts only, never guess a grade''. Second, the model's own rewritten queries pulled neighbouring rules.
+\texttt{search\_policy} now also reads the user's question from graph state (\texttt{InjectedState}, hidden from the
+model's schema), searches with both queries and interleaves the results.
+\todo[Jaswanth Suvvari]{dev-set accuracy before and after each fix (agent versions).}

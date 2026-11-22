@@ -1,0 +1,15 @@
+\section{Limitations and future work}
+\label{sec:limits}
+\begin{itemize}
+\item \textbf{Small, single-run evaluation.} $n{=}40$ held-out, temperature 0, one run, so a 95\% interval is about
+$\pm$0.1 around the accuracy. String-match grading can mis-grade paraphrases.
+\item \textbf{Single-source labels.} Gold items name one source, although the statute and the OPM fact sheet often
+both state the fact. This understates clause recall; fact@k partly corrects for it.
+\item \textbf{Open failure modes.} \texttt{years\_of\_service} is still required by \texttt{leave\_accrual\_calc}, so
+the model can invent it for carryover-only questions. The fix is to make it optional and to ask for missing facts.
+\todo[Jaswanth Suvvari]{other open failure modes from the held-out run.}
+\item \textbf{Shared infrastructure.} The whole team shares one key with one request in flight, so eval runs must
+be scheduled, and latency is dominated by queued model calls.
+\item \textbf{Static corpus.} It is a November 2026 snapshot with no versioning or as-of answers. Changing
+documents (incremental ingestion, stale-answer detection, cache invalidation) is the natural next step.
+\end{itemize}

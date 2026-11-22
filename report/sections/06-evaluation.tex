@@ -1,0 +1,41 @@
+\section{Evaluation and observability}
+\label{sec:eval}
+\textbf{Harness.} \texttt{eval/run\_eval.py} sends each item to \texttt{/agent} (or \texttt{/chat} with a strategy),
+one request at a time. It grades facts, behaviour, citation, retrieval of a gold clause and expected tools, and
+records tokens, LLM calls, tool calls, latency and the final status. Multi-turn items are sent as consecutive turns
+in one conversation. Failures get the first matching label: \emph{tool-call error} (a tool returned an error),
+\emph{retrieval miss} (gold clauses exist but none were retrieved), \emph{hallucination} (wrong although the gold
+clause was retrieved or the right tool ran), and \emph{reasoning error} (everything else).
+
+\begin{table}[h]
+\centering\small
+\caption{End-to-end results. Cost is in tokens: the course endpoint is quota-based, not priced per token.}
+\label{tab:results}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lccccccccc@{}}
+\toprule
+Run & $n$ & Acc. & Behav. & Compl. & Cited & Recall & Tools & LLM & Tokens in / out \\
+\midrule
+Dev, agent & 50 & \multicolumn{8}{l}{\todoin[Jaswanth Suvvari]{\texttt{run\_eval.py --mode agent} on gold\_v1}} \\
+\textbf{Held-out, agent} & 40 & \multicolumn{8}{l}{\todoin[Jaswanth Suvvari]{\texttt{--mode agent} on heldout\_v1 (Vijay's set), run once}} \\
+Held-out, grounded prompt & 40 & \multicolumn{8}{l}{\todoin[Jaswanth Suvvari]{single-prompt baseline run on heldout\_v1}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\todo[Jaswanth Suvvari]{p50/p95 latency per setup; held-out results by category; failure taxonomy table (count and
+one example per failure type: retrieval miss, hallucination, reasoning error, tool-call error); dev vs.\ held-out
+gap and what it says about tuning on the dev set.}
+\todo[Jaswanth Suvvari]{critic on/off ablation (\texttt{max\_critic\_rounds=0}) on heldout\_v1: accuracy, critic
+false-positive rate and token cost.}
+\todo{LLM-as-judge faithfulness score (is every claim supported by the retrieved text?) next to the string-match
+grade; not implemented.}
+
+\textbf{Tracing.} Every answer's trace is built from LangGraph's own event stream and stored in Postgres
+(\texttt{chat.trace\_steps}). Each row is one LLM, tool or retriever step with node, inputs (prompt messages, tool
+arguments, search query), outputs (reply and tool calls, tool result, retrieved chunks with citations), tokens,
+timings, error and a parent pointer, for example the retriever inside \texttt{search\_policy}. Each answer row links
+to its trace through a \texttt{turn\_id}. The UI shows the trace next to the chat and on a trace page. Keeping the
+trace in the application database keeps the deployment at three containers. It is what makes the failure taxonomy
+possible: the trace shows the query the agent chose and what each retrieval stage returned, which separates
+retrieval misses from generation errors.
