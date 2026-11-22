@@ -19,7 +19,8 @@
 \renewcommand{\arraystretch}{1.08}
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 
-% Placeholder for work not yet done: \todo[Owner]{what is missing}. Owner = contributor whose code exists.
+% Placeholder for work not yet done: \todo{what is missing}. Add [Name] only when it is a teammate's part whose
+% code is already in the repo (e.g. \todo[Rajesh Lalam]{...}); everything else stays an unassigned \todo{...}.
 \newcommand{\todo}[2][]{\par\noindent
   \fcolorbox{red}{red!4}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{\color{red!70!black}\small
   \textbf{TODO}\if\relax\detokenize{#1}\relax\else\ \textbf{(#1)}\fi: #2}}\par}

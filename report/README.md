@@ -20,9 +20,9 @@
    | `10-limitations.tex` | Limitations and future work | everyone |
    | `11-team.tex` | Who did what | everyone (add yourself) |
 
-2. **Something not done yet?** Leave a red placeholder so it shows in the PDF:
-   `\todo[Your Name]{what is missing}` (a box), or `\todoin[Your Name]{...}` inside a table cell.
-   Leave the name out if nobody owns it yet. Replace it with real text when done.
+2. **Something not done yet?** Leave a red placeholder so it shows in the PDF: `\todo{what is missing}` (a box), or
+   `\todoin{...}` inside a table cell. Put a name on it, `\todo[Name]{...}`, only when it is a teammate's part whose
+   code is already in the repo and only they can fill it (e.g. Rajesh's retrieval runs). Replace it with real text when done.
 3. **Sources:** add a `\bibitem{key}` to `references.tex` and cite it with `\cite{key}`.
 4. **Names / title:** the title block is at the top of `main.tex`.
 

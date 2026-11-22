@@ -16,17 +16,17 @@ clause was retrieved or the right tool ran), and \emph{reasoning error} (everyth
 \toprule
 Run & $n$ & Acc. & Behav. & Compl. & Cited & Recall & Tools & LLM & Tokens in / out \\
 \midrule
-Dev, agent & 50 & \multicolumn{8}{l}{\todoin[Jaswanth Suvvari]{\texttt{run\_eval.py --mode agent} on gold\_v1}} \\
-\textbf{Held-out, agent} & 40 & \multicolumn{8}{l}{\todoin[Jaswanth Suvvari]{\texttt{--mode agent} on heldout\_v1 (Vijay's set), run once}} \\
-Held-out, grounded prompt & 40 & \multicolumn{8}{l}{\todoin[Jaswanth Suvvari]{single-prompt baseline run on heldout\_v1}} \\
+Dev, agent & 50 & \multicolumn{8}{l}{\todoin{\texttt{run\_eval.py --mode agent} on gold\_v1}} \\
+\textbf{Held-out, agent} & 40 & \multicolumn{8}{l}{\todoin{\texttt{--mode agent} on heldout\_v1 (Vijay's set), run once}} \\
+Held-out, grounded prompt & 40 & \multicolumn{8}{l}{\todoin{single-prompt baseline run on heldout\_v1}} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\todo[Jaswanth Suvvari]{p50/p95 latency per setup; held-out results by category; failure taxonomy table (count and
+\todo{p50/p95 latency per setup; held-out results by category; failure taxonomy table (count and
 one example per failure type: retrieval miss, hallucination, reasoning error, tool-call error); dev vs.\ held-out
 gap and what it says about tuning on the dev set.}
-\todo[Jaswanth Suvvari]{critic on/off ablation (\texttt{max\_critic\_rounds=0}) on heldout\_v1: accuracy, critic
+\todo{critic on/off ablation (\texttt{max\_critic\_rounds=0}) on heldout\_v1: accuracy, critic
 false-positive rate and token cost.}
 \todo{LLM-as-judge faithfulness score (is every claim supported by the retrieved text?) next to the string-match
 grade; not implemented.}

@@ -8,7 +8,7 @@ We curated FedHR-Policy (104 documents, 1,484 sections, 7,574 clauses). We wrote
 dev set and a 40-item held-out set written by a teammate who did not tune the system. We built hybrid BM25 + dense
 retrieval with a cross-encoder reranker (best dev-set sec@5 0.62, fact@5 0.95), and a LangGraph
 router$\to$planner$\to$tools$\to$critic agent with five tools. On the held-out set the agent scores
-\todoin[Jaswanth Suvvari]{held-out accuracy, completion, tool calls, tokens, p50 latency}.
+\todoin{held-out accuracy, completion, tool calls, tokens, p50 latency}.
 Most of the gain came from compensating for the small model in code: forced tool use, deterministic checks around a
 critic that may not emit verdicts, tools for all arithmetic, and searching with the user's own wording.
 \end{abstract}
