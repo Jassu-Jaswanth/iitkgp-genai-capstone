@@ -51,7 +51,7 @@ class Retriever(Protocol):
 
 class PolicyRetriever(BaseRetriever):
     """LangChain retriever over the RAG service. Empty base_url -> placeholder that returns nothing
-    (TODO(rag-integration): set RAG_SERVICE_URL once the RAG service is deployed)."""
+    (set RAG_SERVICE_URL to use the RAG service)."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
     base_url: str = ""

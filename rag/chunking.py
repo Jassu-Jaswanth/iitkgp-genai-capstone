@@ -60,7 +60,7 @@ def load(name: str = "clauses.jsonl") -> list[dict]:
 
 
 def header(c: dict) -> str:
-    """Contextual header '[section citation] heading' (docs/TODO.md tip; helps BM25 + dense on short clauses)."""
+    """Contextual header '[section citation] heading' (helps BM25 + dense on short clauses)."""
     return f"[{c.get('section_citation') or c['citation']}] {c.get('heading') or ''}".rstrip() + "\n"
 
 

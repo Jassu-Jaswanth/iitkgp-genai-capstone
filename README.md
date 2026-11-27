@@ -20,7 +20,7 @@ question → router → planner (LLM) ⇄ tools → critic → answer + [citatio
 - **trace:** every step (model calls, tool calls, searches) is saved in Postgres and shown next to the chat.
 - **cache:** a question asked before is answered instantly; repeated searches are reused. Nothing to set up.
 
-What's left: [docs/TODO.md](docs/TODO.md).
+Project status and future work: [docs/STATUS.md](docs/STATUS.md). Final report and demo video: [report/](report/).
 
 ## Run it (5 minutes)
 1. **Get the secrets** from the team rep: the two API keys, plus two CA certificates.
@@ -50,7 +50,7 @@ UI `cd frontend && npm install && npm run dev` (http://localhost:5173).
 | `rag/` | the search: chunking, hybrid retrieval, reranking, experiments: [rag/README.md](rag/README.md) |
 | `eval/` | the grading script + validator: [eval/README.md](eval/README.md) |
 | `data/` | the dataset: corpus for RAG, tables for tools, golden queries: [docs/DATASET.md](docs/DATASET.md) |
-| `docs/` | **TODO tracker**, dataset guide, course brief and upGrad notes |
+| `docs/` | **project status**, dataset guide, course brief and upGrad notes |
 | `scripts/` | endpoint check |
 
 ## Two rules

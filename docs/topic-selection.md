@@ -1,7 +1,7 @@
 # Topic selection: Track B "Multi-Agent Operations Copilot"
 
 > **Decision (21 Nov 2026):** HR Policy Navigator for US federal employees (statute + regulations + OPM guidance).
-> See `docs/DATASET.md` for the data and `docs/TODO.md` for what is left.
+> See `docs/DATASET.md` for the data and `docs/STATUS.md` for project status.
 
 Source: `resources/Capstone-Project-Templates.pdf` (Track B section) and the API limits in
 `upgrad-communications.md`. **Status: proposal, team to decide.** First confirm what

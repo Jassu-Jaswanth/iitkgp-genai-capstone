@@ -18,9 +18,9 @@ python eval/run_eval.py --mode agent --gold data/queries/heldout_v1.jsonl --tag 
 **Grades per question:** correct facts, right behaviour (answer / refuse / escalate / not covered), citation present,
 right source retrieved, tools used, tokens, time, and why it failed.
 
-**On main today:**
-- 31 golden questions need only `search_policy`: they pass once RAG is plugged in.
-- 6 guardrail questions pass now.
-- 13 expect the TODO tools.
+**Golden set make-up:**
+- 31 questions need only `search_policy`.
+- 6 are guardrail questions (refuse / out of scope).
+- 13 need the calculator and lookup tools.
 
 The golden set is a dev set (we tuned on it), so the **held-out** score is the one to report.

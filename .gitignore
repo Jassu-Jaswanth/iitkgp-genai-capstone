@@ -23,6 +23,6 @@ data/*
 # Windows download metadata
 *:Zone.Identifier
 
-# Local-only context for Claude sessions/subagents (certs, sources, analysis)
+# Local-only context (certs, sources, analysis) and editor settings
 .context/
-.claude/settings.local.json
+**/settings.local.json

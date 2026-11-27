@@ -137,7 +137,7 @@ def evaluate(item: dict, mode: str, resp: dict) -> dict:
             "turn_id": resp.get("turn_id")}  # agent mode: the UI opens this answer's trace
 
 
-# TODO(eval): an LLM-as-judge faithfulness score (answer supported by retrieved text?) next to the string match.
+# Future work: an LLM-as-judge faithfulness score (answer supported by retrieved text?) next to the string match.
 
 
 def summarize(rows: list[dict], mode: str) -> dict:
